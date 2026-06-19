@@ -8,7 +8,6 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-
 PROJECT_ROOT = Path(
     os.environ.get(
         "FRAUD_PROJECT_ROOT",
