@@ -27,6 +27,15 @@ The response includes fraud probability, risk level, recommended decision such a
 <img width="1807" height="796" alt="image" src="https://github.com/user-attachments/assets/49de6cbe-fe7a-4702-9a9e-64c1302775eb" />
 <img width="1811" height="723" alt="image" src="https://github.com/user-attachments/assets/9320d008-d924-47ca-ae17-f85f4f22b03a" />
 
+### Claude Desktop MCP Demo
+
+The project exposes a local MCP server that allows Claude Desktop to call controlled fraud investigation tools.
+
+In the demo, Claude uses the `predict_fraud` MCP tool from natural language input. The tool calls the Fraud API, returns a high-risk manual-review alert, and explains the prediction using real CatBoost SHAP values.
+
+This shows how an LLM agent can safely interact with the fraud system through approved tools, without direct access to the model files, database, or vector store.
+
+
 <img width="1915" height="647" alt="image" src="https://github.com/user-attachments/assets/6589dad7-1136-4af9-8977-7a7407540415" />
 <img width="1912" height="728" alt="image" src="https://github.com/user-attachments/assets/abe405ed-940c-4e6f-b704-2c793718b517" />
 <img width="1918" height="652" alt="image" src="https://github.com/user-attachments/assets/6eb19cb8-24c6-46bb-8de2-c7278ec433b7" />
