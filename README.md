@@ -81,28 +81,54 @@ The core idea is:
 
 ---
 
-## Tech Stack
+## Fraud-Oriented Evaluation and Class Imbalance Handling
 
-Main components:
+Fraud detection is a highly imbalanced classification problem.  
+In this dataset, most applications are legitimate, while only a small percentage are fraud cases.
 
-* Python 3.11
-* pandas
-* numpy
-* scikit-learn
-* XGBoost
-* FastAPI
-* Uvicorn
-* Milvus Vector DB
-* PyMilvus
-* MLflow
-* Docker Compose
-* MinIO
-* etcd
-* Streamlit
-* pytest
-* ruff
+Because of this imbalance, we did not use accuracy as the main evaluation metric.  
+A model can achieve high accuracy simply by predicting almost everything as non-fraud, but this is not useful in a real fraud detection scenario.
 
----
+Instead, we evaluated the models using metrics that are more suitable for fraud detection:
+
+- **PR-AUC / Average Precision**  
+  Measures how well the model identifies fraud cases when the positive class is rare.
+
+- **Recall@Top5%**  
+  Measures how many real fraud cases were captured within the top 5% highest-risk applications.
+
+- **Precision@Top5%**  
+  Measures how many applications in the top 5% highest-risk group were actually fraud.
+
+- **Fraud captured in top 5%**  
+  A business-friendly metric that shows how much fraud can be found if investigators review only the highest-risk 5% of applications.
+
+This approach is closer to a real fraud investigation workflow, where only a limited number of high-risk applications can be manually reviewed.
+
+### Handling Class Imbalance
+
+To help the models learn from the rare fraud cases, we gave higher weight to the fraud class during training.
+
+Different models used different imbalance-handling mechanisms:
+
+- **XGBoost**: `scale_pos_weight`
+- **LightGBM**: `class_weight="balanced"`
+- **CatBoost**: `auto_class_weights="Balanced"`
+- **Logistic Regression**: `class_weight="balanced"`
+
+This makes mistakes on fraud cases more costly during training and helps the models focus more on detecting the minority class.
+
+### Threshold Tuning
+
+We also performed threshold tuning instead of relying on a fixed default threshold such as `0.5`, or a manually chosen threshold such as `0.35`.
+
+For each model, we tested multiple probability thresholds and evaluated the trade-off between:
+
+- Precision
+- Recall
+- F1-score
+
+This allowed us to choose a threshold that better fits the fraud detection use case, where catching more fraud may be more important than optimizing accuracy.
 
 ## Main Capabilities
 
