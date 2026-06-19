@@ -245,12 +245,10 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
     )
 
     candidates = [
+        ("logistic_regression_tabular", "logistic_regression", False),
         ("xgboost_tabular", "xgboost", False),
-        ("xgboost_vector", "xgboost", True),
         ("lightgbm_tabular", "lightgbm", False),
-        ("lightgbm_vector", "lightgbm", True),
         ("catboost_tabular", "catboost", False),
-        ("catboost_vector", "catboost", True),
     ]
 
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
