@@ -19,3 +19,5 @@ reports/*
 .ipynb_checkpoints/
 .pytest_cache/
 .ruff_cache/
+/volumes
+/src/fraud_vector_db_mlops.egg-info
