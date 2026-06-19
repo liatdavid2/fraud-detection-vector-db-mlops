@@ -6,13 +6,13 @@ data:
   raw_path: data/raw
   processed_path: data/processed
   target_column: fraud_bool
-  # Keep this capped for local laptop runtime. Set to 50000 or remove cap later if needed.
-  max_train_rows: 50000
+  # Keep this capped for local laptop runtime. Set to 1000000 or remove cap later if needed.
+  max_train_rows: 200000
 
 model:
   model_type: model_comparison
   embedding_dim: 32
-  n_neighbors: 10
+  n_neighbors: 20
   threshold_review: 0.35
   threshold_decline: 0.75
 

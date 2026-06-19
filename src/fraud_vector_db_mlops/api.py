@@ -533,7 +533,7 @@ def predict(request: PredictRequest) -> PredictResponse:
 
 
 @app.post("/similar-cases")
-def similar_cases(request: PredictRequest, top_k: int = 10) -> dict[str, Any]:
+def similar_cases(request: PredictRequest, top_k: int = 50) -> dict[str, Any]:
     try:
         model = load_model()
         df = pd.DataFrame([request.features])
