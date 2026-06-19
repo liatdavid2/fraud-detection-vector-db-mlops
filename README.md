@@ -71,49 +71,27 @@ The goal of this project is to demonstrate a realistic fraud detection architect
 ## Architecture
 
 ```text
-                       ┌─────────────────────────┐
-                       │  BAF-like Fraud Dataset │
-                       │  or Synthetic Dataset   │
-                       └────────────┬────────────┘
-                                    │
-                                    ▼
-                       ┌─────────────────────────┐
-                       │ Data Validation          │
-                       │ reports/validation.json │
-                       └────────────┬────────────┘
-                                    │
-                                    ▼
-                       ┌─────────────────────────┐
-                       │ Feature Engineering      │
-                       │ numeric + categorical    │
-                       └────────────┬────────────┘
-                                    │
-                    ┌───────────────┴────────────────┐
-                    ▼                                ▼
-        ┌─────────────────────┐          ┌──────────────────────┐
-        │ Fraud ML Model       │          │ Embedding Pipeline    │
-        │ XGBoost / sklearn    │          │ normalized vectors    │
-        └──────────┬──────────┘          └──────────┬───────────┘
-                   │                                │
-                   │                                ▼
-                   │                    ┌──────────────────────┐
-                   │                    │ Milvus Vector DB      │
-                   │                    │ similar fraud cases   │
-                   │                    └──────────┬───────────┘
-                   │                                │
-                   └───────────────┬────────────────┘
-                                   ▼
-                       ┌─────────────────────────┐
-                       │ FastAPI Service          │
-                       │ /predict                 │
-                       │ /similar-cases           │
-                       └────────────┬────────────┘
-                                    │
-                                    ▼
-                       ┌─────────────────────────┐
-                       │ MLflow Tracking          │
-                       │ metrics, params, runs    │
-                       └─────────────────────────┘
+BAF Dataset
+   ↓
+Validation + Feature Engineering
+   ↓
+Model Comparison + MLflow
+   ↓
+Best CatBoost Model
+   ↓
+FastAPI /predict
+   ↓
+SHAP Explanation + Manual Review Alert
+
+Milvus Vector DB
+   ↓
+/similar-cases
+
+Claude Desktop
+   ↓
+MCP Tools
+   ↓
+predict_fraud / find_similar_fraud_cases / get_latest_training_summary
 ```
 
 ---
