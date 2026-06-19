@@ -27,6 +27,14 @@ The response includes fraud probability, risk level, recommended decision such a
 <img width="1807" height="796" alt="image" src="https://github.com/user-attachments/assets/49de6cbe-fe7a-4702-9a9e-64c1302775eb" />
 <img width="1811" height="723" alt="image" src="https://github.com/user-attachments/assets/9320d008-d924-47ca-ae17-f85f4f22b03a" />
 
+<img width="1915" height="647" alt="image" src="https://github.com/user-attachments/assets/6589dad7-1136-4af9-8977-7a7407540415" />
+<img width="1912" height="728" alt="image" src="https://github.com/user-attachments/assets/abe405ed-940c-4e6f-b704-2c793718b517" />
+<img width="1918" height="652" alt="image" src="https://github.com/user-attachments/assets/6eb19cb8-24c6-46bb-8de2-c7278ec433b7" />
+<img width="1905" height="715" alt="image" src="https://github.com/user-attachments/assets/a9277d7f-5f81-491b-ac1b-570d3ff6e6ce" />
+
+
+
+
 ### Similar Case Retrieval with Milvus
 
 The `/similar-cases` endpoint demonstrates retrieval-augmented fraud investigation using Milvus Vector DB.
