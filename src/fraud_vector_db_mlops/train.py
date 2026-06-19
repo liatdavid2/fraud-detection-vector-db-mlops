@@ -68,7 +68,7 @@ def create_run_output_dir(base_reports_path: Path) -> Path:
 
 
 def copy_latest_artifacts(run_reports_path: Path, latest_reports_path: Path) -> None:
-    """Copy current run artifacts to reports/ as latest files for dashboard/readme convenience."""
+    """Copy current run artifacts to reports/ as latest files for convenience."""
     latest_reports_path.mkdir(parents=True, exist_ok=True)
 
     artifact_names = [
@@ -244,6 +244,8 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
         else pd.Series([f"train-{i}" for i in range(len(X_train))])
     )
 
+    # Four real-data benchmark models.
+    # Vector DB is still used after training for similar-case retrieval.
     candidates = [
         ("logistic_regression_tabular", "logistic_regression", False),
         ("xgboost_tabular", "xgboost", False),
@@ -254,154 +256,195 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
     mlflow.set_experiment(settings.mlflow_experiment_name)
 
+    mlflow_parent_run_name = f"model-comparison-{run_reports_path.name}"
+
     all_results: list[dict[str, object]] = []
     best_model: FraudVectorModel | None = None
     best_metrics: dict[str, float] | None = None
     best_name: str | None = None
     best_y_proba: np.ndarray | None = None
     best_y_pred: np.ndarray | None = None
+    indexed = False
 
-    for experiment_name, classifier_name, use_vector_features in candidates:
-        print("=" * 80)
-        print(f"Starting experiment: {experiment_name}")
-        print(f"classifier={classifier_name}, use_vector_features={use_vector_features}")
-        print("=" * 80)
+    with mlflow.start_run(run_name=mlflow_parent_run_name):
+        mlflow.set_tags(
+            {
+                "run_type": "model_comparison",
+                "run_date": run_reports_path.name,
+                "run_reports_path": str(run_reports_path),
+                "dataset": "BAF Base.csv",
+                "target": target,
+            }
+        )
 
-        with mlflow.start_run(run_name=experiment_name):
-            mlflow.log_params(
-                {
-                    "target": target,
-                    "rows": len(df),
-                    "train_rows": len(X_train),
-                    "test_rows": len(X_test),
-                    "fraud_rate": float(df[target].mean()),
-                    "embedding_dim": settings.embedding_dim,
-                    "n_neighbors": settings.n_neighbors,
+        mlflow.log_params(
+            {
+                "rows": len(df),
+                "train_rows": len(X_train),
+                "test_rows": len(X_test),
+                "fraud_rate": float(df[target].mean()),
+                "test_fraud_rate": float(y_test.mean()),
+                "embedding_dim": settings.embedding_dim,
+                "n_neighbors": settings.n_neighbors,
+                "candidate_models": ",".join(name for name, _, _ in candidates),
+                "skip_milvus": bool(skip_milvus),
+                "run_reports_path": str(run_reports_path),
+            }
+        )
+
+        for experiment_name, classifier_name, use_vector_features in candidates:
+            print("=" * 80)
+            print(f"Starting experiment: {experiment_name}")
+            print(f"classifier={classifier_name}, use_vector_features={use_vector_features}")
+            print("=" * 80)
+
+            with mlflow.start_run(run_name=experiment_name, nested=True):
+                mlflow.set_tags(
+                    {
+                        "run_type": "candidate_model",
+                        "parent_run_date": run_reports_path.name,
+                        "classifier_name": classifier_name,
+                        "use_vector_features": str(use_vector_features),
+                    }
+                )
+
+                mlflow.log_params(
+                    {
+                        "target": target,
+                        "rows": len(df),
+                        "train_rows": len(X_train),
+                        "test_rows": len(X_test),
+                        "fraud_rate": float(df[target].mean()),
+                        "embedding_dim": settings.embedding_dim,
+                        "n_neighbors": settings.n_neighbors,
+                        "classifier_name": classifier_name,
+                        "use_vector_features": use_vector_features,
+                        "run_date": run_reports_path.name,
+                        "run_reports_path": str(run_reports_path),
+                    }
+                )
+
+                model = FraudVectorModel(
+                    target_column=target,
+                    embedding_dim=settings.embedding_dim,
+                    n_neighbors=settings.n_neighbors,
+                    random_state=settings.random_state,
+                    classifier_name=classifier_name,
+                    use_vector_features=use_vector_features,
+                )
+
+                model.fit(X_train, y_train, application_ids=train_ids)
+
+                y_proba = model.predict_proba(X_test)[:, 1]
+                metrics = evaluate_fraud_model(
+                    y_true=y_test,
+                    y_proba=y_proba,
+                    default_threshold=settings.review_threshold,
+                )
+                y_pred = (y_proba >= metrics["best_threshold"]).astype(int)
+
+                row = {
+                    "experiment_name": experiment_name,
                     "classifier_name": classifier_name,
                     "use_vector_features": use_vector_features,
-                    "run_reports_path": str(run_reports_path),
+                    **metrics,
                 }
+                all_results.append(row)
+
+                mlflow.log_metrics(metrics)
+
+                print(f"Finished experiment: {experiment_name}")
+                print(json.dumps(metrics, indent=2))
+
+                is_better = best_metrics is None or (
+                    metrics["average_precision"],
+                    metrics["recall_at_top_5pct"],
+                ) > (
+                    best_metrics["average_precision"],
+                    best_metrics["recall_at_top_5pct"],
+                )
+
+                if is_better:
+                    best_model = model
+                    best_metrics = metrics
+                    best_name = experiment_name
+                    best_y_proba = y_proba
+                    best_y_pred = y_pred
+
+        if best_model is None or best_metrics is None or best_name is None:
+            raise RuntimeError("No model was trained successfully.")
+
+        if best_y_proba is None or best_y_pred is None:
+            raise RuntimeError("Best model predictions are missing.")
+
+        comparison_df = pd.DataFrame(all_results).sort_values(
+            by=["average_precision", "recall_at_top_5pct"],
+            ascending=False,
+        )
+
+        comparison_path = run_reports_path / "model_comparison.csv"
+        comparison_df.to_csv(comparison_path, index=False)
+
+        save_json(best_metrics, run_reports_path / "metrics.json")
+        save_json(
+            {
+                "best_model": best_name,
+                "selection_metric": "average_precision_then_recall_at_top_5pct",
+                "metrics": best_metrics,
+                "run_reports_path": str(run_reports_path),
+                "mlflow_parent_run_name": mlflow_parent_run_name,
+            },
+            run_reports_path / "best_model.json",
+        )
+
+        report = classification_report(
+            y_test,
+            best_y_pred,
+            output_dict=True,
+            zero_division=0,
+        )
+        save_json(report, run_reports_path / "classification_report.json")
+
+        plot_reports(
+            y_true=y_test,
+            y_proba=best_y_proba,
+            y_pred=best_y_pred,
+            reports_path=run_reports_path,
+        )
+
+        sample_predictions = X_test.head(200).copy()
+        sample_predictions["actual_fraud"] = y_test.head(200).values
+        sample_predictions["fraud_probability"] = best_y_proba[: len(sample_predictions)]
+        sample_predictions.to_csv(
+            run_reports_path / "training_sample_predictions.csv",
+            index=False,
+        )
+
+        joblib.dump(best_model, settings.model_path)
+
+        train_probabilities = best_model.predict_proba(X_train)[:, 1]
+        if not skip_milvus:
+            indexed = try_index_model_embeddings(
+                best_model,
+                probabilities=train_probabilities,
             )
+        else:
+            indexed = False
 
-            model = FraudVectorModel(
-                target_column=target,
-                embedding_dim=settings.embedding_dim,
-                n_neighbors=settings.n_neighbors,
-                random_state=settings.random_state,
-                classifier_name=classifier_name,
-                use_vector_features=use_vector_features,
-            )
+        copy_latest_artifacts(
+            run_reports_path=run_reports_path,
+            latest_reports_path=settings.reports_path,
+        )
 
-            model.fit(X_train, y_train, application_ids=train_ids)
-
-            y_proba = model.predict_proba(X_test)[:, 1]
-            metrics = evaluate_fraud_model(
-                y_true=y_test,
-                y_proba=y_proba,
-                default_threshold=settings.review_threshold,
-            )
-            y_pred = (y_proba >= metrics["best_threshold"]).astype(int)
-
-            row = {
-                "experiment_name": experiment_name,
-                "classifier_name": classifier_name,
-                "use_vector_features": use_vector_features,
-                **metrics,
-            }
-            all_results.append(row)
-
-            mlflow.log_metrics(metrics)
-
-            print(f"Finished experiment: {experiment_name}")
-            print(json.dumps(metrics, indent=2))
-
-            is_better = best_metrics is None or (
-                metrics["average_precision"],
-                metrics["recall_at_top_5pct"],
-            ) > (
-                best_metrics["average_precision"],
-                best_metrics["recall_at_top_5pct"],
-            )
-
-            if is_better:
-                best_model = model
-                best_metrics = metrics
-                best_name = experiment_name
-                best_y_proba = y_proba
-                best_y_pred = y_pred
-
-    if best_model is None or best_metrics is None or best_name is None:
-        raise RuntimeError("No model was trained successfully.")
-
-    if best_y_proba is None or best_y_pred is None:
-        raise RuntimeError("Best model predictions are missing.")
-
-    comparison_df = pd.DataFrame(all_results).sort_values(
-        by=["average_precision", "recall_at_top_5pct"],
-        ascending=False,
-    )
-
-    comparison_path = run_reports_path / "model_comparison.csv"
-    comparison_df.to_csv(comparison_path, index=False)
-
-    save_json(best_metrics, run_reports_path / "metrics.json")
-    save_json(
-        {
-            "best_model": best_name,
-            "selection_metric": "average_precision_then_recall_at_top_5pct",
-            "metrics": best_metrics,
-            "run_reports_path": str(run_reports_path),
-        },
-        run_reports_path / "best_model.json",
-    )
-
-    report = classification_report(
-        y_test,
-        best_y_pred,
-        output_dict=True,
-        zero_division=0,
-    )
-    save_json(report, run_reports_path / "classification_report.json")
-
-    plot_reports(
-        y_true=y_test,
-        y_proba=best_y_proba,
-        y_pred=best_y_pred,
-        reports_path=run_reports_path,
-    )
-
-    sample_predictions = X_test.head(200).copy()
-    sample_predictions["actual_fraud"] = y_test.head(200).values
-    sample_predictions["fraud_probability"] = best_y_proba[: len(sample_predictions)]
-    sample_predictions.to_csv(
-        run_reports_path / "training_sample_predictions.csv",
-        index=False,
-    )
-
-    joblib.dump(best_model, settings.model_path)
-
-    train_probabilities = best_model.predict_proba(X_train)[:, 1]
-    if not skip_milvus:
-        indexed = try_index_model_embeddings(best_model, probabilities=train_probabilities)
-    else:
-        indexed = False
-
-    copy_latest_artifacts(
-        run_reports_path=run_reports_path,
-        latest_reports_path=settings.reports_path,
-    )
-
-    with mlflow.start_run(run_name="best-model-artifacts"):
+        # Log summary metrics on the parent run as well.
         mlflow.log_params(
             {
                 "best_model": best_name,
                 "milvus_indexed": indexed,
                 "selection_metric": "average_precision_then_recall_at_top_5pct",
-                "run_reports_path": str(run_reports_path),
             }
         )
-        mlflow.log_metrics(best_metrics)
-        mlflow.log_artifact(str(settings.model_path), artifact_path="model")
+        mlflow.log_metrics({f"best_{k}": v for k, v in best_metrics.items()})
 
         for artifact in [
             "metrics.json",
@@ -419,8 +462,46 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
             if path.exists():
                 mlflow.log_artifact(str(path), artifact_path="reports")
 
+        with mlflow.start_run(run_name="best-model-artifacts", nested=True):
+            mlflow.set_tags(
+                {
+                    "run_type": "best_model_artifacts",
+                    "parent_run_date": run_reports_path.name,
+                    "best_model": best_name,
+                }
+            )
+
+            mlflow.log_params(
+                {
+                    "best_model": best_name,
+                    "milvus_indexed": indexed,
+                    "selection_metric": "average_precision_then_recall_at_top_5pct",
+                    "run_date": run_reports_path.name,
+                    "run_reports_path": str(run_reports_path),
+                }
+            )
+            mlflow.log_metrics(best_metrics)
+            mlflow.log_artifact(str(settings.model_path), artifact_path="model")
+
+            for artifact in [
+                "metrics.json",
+                "best_model.json",
+                "model_comparison.csv",
+                "classification_report.json",
+                "confusion_matrix.png",
+                "pr_curve.png",
+                "roc_curve.png",
+                "validation_report.json",
+                "training_sample_predictions.csv",
+                "run_metadata.json",
+            ]:
+                path = run_reports_path / artifact
+                if path.exists():
+                    mlflow.log_artifact(str(path), artifact_path="reports")
+
     print("=" * 80)
     print("Training completed.")
+    print(f"MLflow parent run: {mlflow_parent_run_name}")
     print(f"Best model: {best_name}")
     print(json.dumps(best_metrics, indent=2))
     print(f"Model saved to: {settings.model_path}")
