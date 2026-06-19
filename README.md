@@ -1,292 +1,812 @@
-# fraud-vector-db-mlops
+# Fraud Detection Vector DB MLOps
 
-End-to-end **Fraud Detection + Vector DB + MLOps** project.
+Production-style fraud detection project that combines tabular machine learning, vector similarity search, and MLOps practices.
 
-The project trains a fraud detection model on the Bank Account Fraud Dataset Suite, creates tabular embeddings for similarity search, stores fraud case vectors in **Milvus**, tracks experiments in **MLflow**, serves predictions with **FastAPI**, and includes data validation, drift monitoring, CI, Docker Compose, and a small dashboard.
+The system trains a fraud detection model, stores historical application embeddings in Milvus Vector DB, and exposes FastAPI endpoints for real-time fraud scoring and similar-case retrieval.
 
-> No API keys are committed. Use `.env.example` as a template.
+This project is designed as an end-to-end AI/ML engineering portfolio project, not just a notebook.
 
 ---
 
-## What this project demonstrates
+## Project Goals
 
-- Fraud detection on imbalanced tabular data
-- Vector database similarity search for case-based fraud reasoning
-- Hybrid features: raw tabular features + similar-case fraud features
-- MLflow experiment tracking and model artifacts
-- Milvus vector DB indexing
-- FastAPI production-style serving
-- Data validation checks
-- Drift monitoring report
-- GitHub Actions CI
-- Docker Compose for local infrastructure
-- Streamlit dashboard for model reports
+The goal of this project is to demonstrate a realistic fraud detection architecture that includes:
+
+* Fraud detection using tabular ML features
+* Vector similarity search for finding similar historical cases
+* Milvus Vector DB for case-based fraud reasoning
+* MLflow experiment tracking
+* Data validation reports
+* FastAPI model serving
+* Docker Compose infrastructure
+* Synthetic smoke-test dataset generation
+* Reproducible local development on Windows
+* API testing through Swagger and curl
+
+The core idea is:
+
+> A fraud model should not only return a fraud probability.
+> It should also show similar past cases, especially similar fraud cases, to support investigation and explainability.
 
 ---
 
 ## Architecture
 
 ```text
-BAF / CSV Dataset
-      |
-      v
-Data Validation  ---> reports/validation_report.json
-      |
-      v
-Feature Engineering + Embeddings
-      |                         \
-      v                          \
-Vector Similarity Features        Milvus Vector DB
-      |                            top-k similar cases
-      v
-XGBoost / sklearn Fraud Model
-      |
-      v
-MLflow Tracking + Model Artifact
-      |
-      v
-FastAPI /predict + /similar-cases
-      |
-      v
-Monitoring + Drift Reports
+                       ┌─────────────────────────┐
+                       │  BAF-like Fraud Dataset │
+                       │  or Synthetic Dataset   │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
+                       ┌─────────────────────────┐
+                       │ Data Validation          │
+                       │ reports/validation.json │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
+                       ┌─────────────────────────┐
+                       │ Feature Engineering      │
+                       │ numeric + categorical    │
+                       └────────────┬────────────┘
+                                    │
+                    ┌───────────────┴────────────────┐
+                    ▼                                ▼
+        ┌─────────────────────┐          ┌──────────────────────┐
+        │ Fraud ML Model       │          │ Embedding Pipeline    │
+        │ XGBoost / sklearn    │          │ normalized vectors    │
+        └──────────┬──────────┘          └──────────┬───────────┘
+                   │                                │
+                   │                                ▼
+                   │                    ┌──────────────────────┐
+                   │                    │ Milvus Vector DB      │
+                   │                    │ similar fraud cases   │
+                   │                    └──────────┬───────────┘
+                   │                                │
+                   └───────────────┬────────────────┘
+                                   ▼
+                       ┌─────────────────────────┐
+                       │ FastAPI Service          │
+                       │ /predict                 │
+                       │ /similar-cases           │
+                       └────────────┬────────────┘
+                                    │
+                                    ▼
+                       ┌─────────────────────────┐
+                       │ MLflow Tracking          │
+                       │ metrics, params, runs    │
+                       └─────────────────────────┘
 ```
 
 ---
 
-## Repository structure
+## Tech Stack
+
+Main components:
+
+* Python 3.11
+* pandas
+* numpy
+* scikit-learn
+* XGBoost
+* FastAPI
+* Uvicorn
+* Milvus Vector DB
+* PyMilvus
+* MLflow
+* Docker Compose
+* MinIO
+* etcd
+* Streamlit
+* pytest
+* ruff
+
+---
+
+## Main Capabilities
+
+### Fraud Prediction
+
+The API receives application features and returns a fraud risk prediction.
+
+Example input features:
+
+* customer age
+* income
+* name/email similarity
+* velocity in the last 6 hours
+* device fraud count
+* proposed credit limit
+* payment type
+* employment status
+* housing status
+* month
+
+The prediction endpoint returns:
+
+* fraud probability
+* decision
+* risk level
+* reason codes
+* vector similarity features
+* similar historical cases
+
+---
+
+### Similar Case Retrieval
+
+Each historical application is converted into an embedding vector and inserted into Milvus.
+
+At prediction time, the system searches for the top-k most similar historical applications.
+
+This supports case-based fraud reasoning:
 
 ```text
-fraud-vector-db-mlops/
-├── src/fraud_vector_db_mlops/
-│   ├── api.py                  # FastAPI service
-│   ├── batch_predict.py         # Batch scoring
-│   ├── config.py                # Project settings
-│   ├── data.py                  # Dataset download/load/synthetic fallback
-│   ├── drift.py                 # PSI drift monitoring
-│   ├── milvus_store.py          # Milvus vector DB integration
-│   ├── model.py                 # Hybrid fraud model
-│   ├── train.py                 # Training pipeline + MLflow
-│   ├── validation.py            # Data quality checks
-│   └── dashboard.py             # Streamlit dashboard
-├── configs/config.yaml
+New application
+      ↓
+Feature vector
+      ↓
+Milvus similarity search
+      ↓
+Top-k similar historical applications
+      ↓
+Fraud investigation context
+```
+
+Example response from `/similar-cases`:
+
+```json
+{
+  "source": "milvus",
+  "similar_cases": [
+    {
+      "application_id": "APP-014777",
+      "label": 1,
+      "similarity": 0.8801047801971436,
+      "distance": 0.8801047801971436
+    },
+    {
+      "application_id": "APP-006016",
+      "label": 0,
+      "similarity": 0.8761844635009766,
+      "distance": 0.8761844635009766
+    }
+  ]
+}
+```
+
+`label = 1` means fraud.
+`label = 0` means non-fraud.
+
+---
+
+## MLOps Features
+
+The project includes:
+
+* MLflow tracking server
+* Experiment logging
+* Metric logging
+* Model artifact saving
+* Validation reports
+* Dockerized Milvus infrastructure
+* Reproducible setup scripts
+* FastAPI serving layer
+* Local dashboard
+* Smoke-test data generation
+* API testing through Swagger and curl
+
+---
+
+## Project Structure
+
+```text
+fraud-detection-vector-db-mlops/
+│
+├── src/
+│   └── fraud_vector_db_mlops/
+│       ├── api.py
+│       ├── config.py
+│       ├── data.py
+│       ├── validation.py
+│       ├── train.py
+│       ├── milvus_store.py
+│       ├── features.py
+│       ├── monitoring.py
+│       └── dashboard.py
+│
+├── scripts/
+│   ├── setup_windows.cmd
+│   ├── start_services.cmd
+│   ├── make_sample_and_train.cmd
+│   ├── run_api.cmd
+│   └── run_dashboard.cmd
+│
+├── data/
+│   └── raw/
+│
+├── models/
+│   └── fraud_vector_model.joblib
+│
+├── reports/
+│   └── validation_report.json
+│
 ├── docker-compose.yml
-├── Dockerfile
+├── Dockerfile.mlflow
 ├── requirements.txt
 ├── pyproject.toml
-├── scripts/
-├── tests/
-└── .github/workflows/ci.yml
+├── .env.example
+└── README.md
 ```
 
 ---
 
-## Quick start on Windows CMD
+## Prerequisites
 
-### 1. Create virtual environment
+Install before running:
+
+* Python 3.11
+* Docker Desktop
+* Windows CMD or PowerShell
+* Git, optional but recommended
+
+Docker Desktop is required for:
+
+* Milvus
+* etcd
+* MinIO
+* MLflow tracking server
+
+---
+
+## Quick Start on Windows
+
+From the project root:
+
+```cmd
+cd C:\Users\liatd\Documents\GitHub\fraud-detection-vector-db-mlops
+```
+
+Create and activate a virtual environment:
 
 ```cmd
 py -3.11 -m venv .venv
-.venv\Scripts\activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+call .venv\Scripts\activate
 ```
 
-### 2. Start infrastructure
+Install dependencies and the local package:
 
 ```cmd
-docker compose up -d
+scripts\setup_windows.cmd
 ```
 
-Services:
-
-- MLflow: http://localhost:5000
-- Milvus: localhost:19530
-- MinIO console: http://localhost:9001
-
-### 3. Create `.env`
+If the package is not found, run manually:
 
 ```cmd
-copy .env.example .env
+pip install -e .
 ```
 
-### 4. Download the real dataset from Kaggle
-
-```cmd
-python -m fraud_vector_db_mlops.data --download
-```
-
-This uses `kagglehub` and downloads:
+This is important because the project uses a `src/` layout:
 
 ```text
-sgpjesus/bank-account-fraud-dataset-neurips-2022
+src/fraud_vector_db_mlops/
 ```
 
-If Kaggle is not configured, you can still run a smoke test using a small synthetic dataset:
-
-```cmd
-python -m fraud_vector_db_mlops.data --make-sample
-```
-
-### 5. Validate data
-
-```cmd
-python -m fraud_vector_db_mlops.validation
-```
-
-### 6. Train model and log to MLflow
-
-```cmd
-python -m fraud_vector_db_mlops.train
-```
-
-Artifacts created:
+Without editable installation, Python may fail with:
 
 ```text
-models/fraud_vector_model.joblib
-reports/metrics.json
-reports/classification_report.json
-reports/confusion_matrix.png
-reports/pr_curve.png
-reports/roc_curve.png
-reports/training_sample_predictions.csv
-```
-
-### 7. Run API
-
-```cmd
-uvicorn fraud_vector_db_mlops.api:app --reload --host 0.0.0.0 --port 8000
-```
-
-Open:
-
-```text
-http://localhost:8000/docs
-```
-
-### 8. Example prediction
-
-```cmd
-curl -X POST "http://localhost:8000/predict" ^
-  -H "Content-Type: application/json" ^
-  -d "{\"features\": {\"income\": 30000, \"name_email_similarity\": 0.2, \"customer_age\": 25, \"payment_type\": \"AA\", \"employment_status\": \"CA\"}}"
-```
-
-### 9. Drift report
-
-```cmd
-python -m fraud_vector_db_mlops.drift
-```
-
-### 10. Dashboard
-
-```cmd
-streamlit run src/fraud_vector_db_mlops/dashboard.py
+ModuleNotFoundError: No module named 'fraud_vector_db_mlops'
 ```
 
 ---
 
-## Local smoke test without Kaggle or Docker
+## Start Infrastructure
 
-For a fast demo:
+Start Milvus, MinIO, etcd, and MLflow:
 
 ```cmd
-py -3.11 -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python -m fraud_vector_db_mlops.data --make-sample
-python -m fraud_vector_db_mlops.validation
-python -m fraud_vector_db_mlops.train --skip-milvus
-uvicorn fraud_vector_db_mlops.api:app --reload
+scripts\start_services.cmd
 ```
 
----
-
-## Why Vector DB is useful here
-
-Traditional fraud models usually score each application independently. This project adds **case-based reasoning**:
-
-- Is this application similar to known fraud cases?
-- What percentage of nearest neighbors were fraud?
-- Is there a suspicious cluster around this application?
-- Can we show similar historical examples to a human reviewer?
-
-The model receives additional features such as:
+Expected containers:
 
 ```text
-neighbor_fraud_rate_top_5
-neighbor_fraud_rate_top_20
-nearest_neighbor_similarity
-nearest_fraud_similarity
-avg_similarity_to_fraud_neighbors
-fraud_neighbors_top_20
+fraud-milvus-minio
+fraud-milvus-etcd
+fraud-milvus-standalone
+fraud-mlflow
 ```
 
-This makes the system more explainable and closer to how fraud analysts think.
-
----
-
-## MLflow
-
-The training pipeline logs:
-
-- dataset size
-- class imbalance
-- model type
-- hyperparameters
-- ROC-AUC
-- PR-AUC
-- precision / recall / F1
-- confusion matrix
-- PR curve
-- ROC curve
-- serialized model artifact
-
-Run UI:
-
-```cmd
-docker compose up -d mlflow
-```
-
-Then open:
+MLflow UI:
 
 ```text
 http://localhost:5000
 ```
 
----
-
-## Milvus
-
-The pipeline creates a collection called:
+Milvus port:
 
 ```text
-fraud_cases
-```
-
-Stored fields:
-
-```text
-application_id
-embedding vector
-label
-fraud probability
-split
-```
-
-The API can use Milvus to return top similar historical cases.
-
----
-
-## CV / LinkedIn description
-
-```text
-Built an end-to-end fraud detection MLOps platform combining tabular ML models with Milvus vector database similarity search for case-based fraud reasoning. Implemented MLflow experiment tracking, FastAPI serving, Dockerized infrastructure, data validation, drift monitoring, CI/CD, and model reporting on the NeurIPS Bank Account Fraud dataset.
+localhost:19530
 ```
 
 ---
 
-## Notes
+## Generate Data and Train the Model
 
-- The real BAF dataset is downloaded locally and is not included in this repository.
-- The repository includes a synthetic fallback dataset only for smoke tests.
-- Do not commit `.env`, datasets, models, or MLflow runs.
+Run:
+
+```cmd
+scripts\make_sample_and_train.cmd
+```
+
+This script:
+
+1. Creates a synthetic BAF-like fraud dataset
+2. Runs data validation
+3. Trains the fraud detection model
+4. Logs metrics to MLflow
+5. Saves the model artifact
+6. Indexes application embeddings into Milvus
+
+Expected successful output:
+
+```text
+Synthetic smoke-test dataset created
+Validation report saved
+Milvus indexing completed
+Training completed
+Model saved to: models\fraud_vector_model.joblib
+```
+
+Important:
+
+To populate Milvus, training must run without `--skip-milvus`.
+
+Correct command:
+
+```cmd
+python -m fraud_vector_db_mlops.train
+```
+
+If training is run with `--skip-milvus`, the model will train but the Milvus collection will not be populated.
+
+---
+
+## Check Milvus Collection
+
+To confirm that Milvus contains indexed vectors:
+
+```cmd
+python -c "from pymilvus import connections, Collection; connections.connect(alias='default', host='localhost', port='19530'); c=Collection('fraud_cases'); c.load(); print('entities:', c.num_entities)"
+```
+
+Expected output example:
+
+```text
+entities: 13158
+```
+
+The exact number may change depending on the dataset size and train/test split.
+
+---
+
+## Run the API
+
+Start FastAPI:
+
+```cmd
+scripts\run_api.cmd
+```
+
+Keep this terminal open.
+
+Open Swagger UI:
+
+```text
+http://localhost:8000/docs
+```
+
+The root URL may return `404`, and that is fine:
+
+```text
+http://localhost:8000/
+```
+
+Use the Swagger page for API testing:
+
+```text
+http://localhost:8000/docs
+```
+
+---
+
+## API Endpoints
+
+### Predict Fraud Risk
+
+```text
+POST /predict
+```
+
+Example curl for Windows CMD:
+
+```cmd
+curl -X POST "http://localhost:8000/predict" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"features\":{\"customer_age\":22,\"income\":18000,\"name_email_similarity\":0.18,\"velocity_6h\":72,\"device_fraud_count\":3,\"proposed_credit_limit\":2000,\"payment_type\":\"AE\",\"employment_status\":\"CA\",\"housing_status\":\"BB\",\"month\":6}}"
+```
+
+Example JSON body:
+
+```json
+{
+  "features": {
+    "customer_age": 22,
+    "income": 18000,
+    "name_email_similarity": 0.18,
+    "velocity_6h": 72,
+    "device_fraud_count": 3,
+    "proposed_credit_limit": 2000,
+    "payment_type": "AE",
+    "employment_status": "CA",
+    "housing_status": "BB",
+    "month": 6
+  }
+}
+```
+
+Expected response fields:
+
+```json
+{
+  "fraud_probability": 0.73,
+  "decision": "manual_review",
+  "risk_level": "high",
+  "reason_codes": [
+    "High model fraud probability",
+    "Similar historical fraud cases found"
+  ],
+  "similar_cases": []
+}
+```
+
+---
+
+### Find Similar Historical Cases
+
+```text
+POST /similar-cases?top_k=5
+```
+
+Example curl for Windows CMD:
+
+```cmd
+curl -X POST "http://localhost:8000/similar-cases?top_k=5" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"features\":{\"customer_age\":22,\"income\":18000,\"name_email_similarity\":0.18,\"velocity_6h\":72,\"device_fraud_count\":3,\"proposed_credit_limit\":2000,\"payment_type\":\"AE\",\"employment_status\":\"CA\",\"housing_status\":\"BB\",\"month\":6}}"
+```
+
+Example response:
+
+```json
+{
+  "source": "milvus",
+  "similar_cases": [
+    {
+      "application_id": "APP-014777",
+      "label": 1,
+      "similarity": 0.8801047801971436,
+      "distance": 0.8801047801971436
+    },
+    {
+      "application_id": "APP-006016",
+      "label": 0,
+      "similarity": 0.8761844635009766,
+      "distance": 0.8761844635009766
+    },
+    {
+      "application_id": "APP-010166",
+      "label": 0,
+      "similarity": 0.861536979675293,
+      "distance": 0.861536979675293
+    }
+  ]
+}
+```
+
+If the response contains:
+
+```json
+{
+  "source": "milvus"
+}
+```
+
+then the API is using Milvus successfully.
+
+If the response contains an empty list:
+
+```json
+{
+  "source": "milvus",
+  "similar_cases": []
+}
+```
+
+then Milvus is reachable, but the collection may be empty. Run training again without `--skip-milvus`.
+
+---
+
+## Data Validation
+
+The validation pipeline checks:
+
+* Dataset row count
+* Target column exists
+* Target is binary
+* Class imbalance is visible
+* Missing values
+* Duplicate rows
+* Constant columns
+* Numeric features availability
+* Temporal column availability
+
+Example validation output:
+
+```text
+[PASS] rows_available
+[PASS] target_exists
+[PASS] binary_target
+[PASS] class_imbalance_visible
+[PASS] missingness
+[PASS] duplicate_rows
+[PASS] constant_columns
+[PASS] numeric_features_available
+[PASS] temporal_column_available
+```
+
+The report is saved to:
+
+```text
+reports/validation_report.json
+```
+
+---
+
+## MLflow Tracking
+
+The training process logs an MLflow experiment named:
+
+```text
+fraud-vector-db-mlops
+```
+
+The run name is:
+
+```text
+hybrid-vector-fraud-model
+```
+
+Open MLflow UI:
+
+```text
+http://localhost:5000
+```
+
+Logged information includes:
+
+* ROC-AUC
+* Average precision / PR-AUC
+* Review threshold
+* Precision at threshold
+* Recall at threshold
+* F1 at threshold
+* Model artifact
+* Parameters
+
+Example training metrics from the smoke-test dataset:
+
+```json
+{
+  "roc_auc": 0.5948957189901207,
+  "average_precision": 0.014907313762151935,
+  "precision_at_review_threshold": 0.0,
+  "recall_at_review_threshold": 0.0,
+  "f1_at_review_threshold": 0.0,
+  "review_threshold": 0.35
+}
+```
+
+These metrics are from the synthetic smoke-test dataset and should be treated as a baseline run.
+
+---
+
+## Streamlit Dashboard
+
+Run the dashboard:
+
+```cmd
+scripts\run_dashboard.cmd
+```
+
+The dashboard can be used to inspect project outputs such as metrics, reports, and predictions.
+
+---
+
+## Troubleshooting
+
+### ModuleNotFoundError
+
+Error:
+
+```text
+ModuleNotFoundError: No module named 'fraud_vector_db_mlops'
+```
+
+Fix:
+
+```cmd
+call .venv\Scripts\activate
+pip install -e .
+```
+
+Reason:
+
+The project uses a `src/` layout and must be installed as an editable package.
+
+---
+
+### `/similar-cases` returns an empty list
+
+Response:
+
+```json
+{
+  "source": "milvus",
+  "similar_cases": []
+}
+```
+
+Meaning:
+
+Milvus is running, but the collection is empty.
+
+Fix:
+
+```cmd
+python -m fraud_vector_db_mlops.train
+```
+
+Do not use:
+
+```cmd
+python -m fraud_vector_db_mlops.train --skip-milvus
+```
+
+Then check:
+
+```cmd
+python -c "from pymilvus import connections, Collection; connections.connect(alias='default', host='localhost', port='19530'); c=Collection('fraud_cases'); c.load(); print('entities:', c.num_entities)"
+```
+
+Expected:
+
+```text
+entities: 13158
+```
+
+---
+
+### `/docs` works but `/` returns 404
+
+This is fine.
+
+Use:
+
+```text
+http://localhost:8000/docs
+```
+
+The root endpoint is not required.
+
+---
+
+### PyMilvusDeprecationWarning
+
+Warnings such as:
+
+```text
+PyMilvusDeprecationWarning: ORM-style PyMilvus API will be removed
+```
+
+are not blocking errors.
+
+The code still works.
+
+---
+
+### MLflow Git warning
+
+Warning:
+
+```text
+Failed to import Git
+```
+
+This means Git is not available in PATH.
+
+It does not stop training.
+
+Optional fix:
+
+* Install Git for Windows
+* Add Git to PATH
+* Restart CMD
+
+---
+
+## Current Demo Commands
+
+Full local demo:
+
+```cmd
+cd C:\Users\liatd\Documents\GitHub\fraud-detection-vector-db-mlops
+call .venv\Scripts\activate
+scripts\start_services.cmd
+python -m fraud_vector_db_mlops.train
+scripts\run_api.cmd
+```
+
+In another CMD:
+
+```cmd
+curl -X POST "http://localhost:8000/similar-cases?top_k=5" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"features\":{\"customer_age\":22,\"income\":18000,\"name_email_similarity\":0.18,\"velocity_6h\":72,\"device_fraud_count\":3,\"proposed_credit_limit\":2000,\"payment_type\":\"AE\",\"employment_status\":\"CA\",\"housing_status\":\"BB\",\"month\":6}}"
+```
+
+Expected response:
+
+```json
+{
+  "source": "milvus",
+  "similar_cases": [
+    {
+      "application_id": "APP-014777",
+      "label": 1,
+      "similarity": 0.8801047801971436
+    }
+  ]
+}
+```
+
+This confirms that the vector database integration works.
+
+---
+
+## Portfolio Value
+
+This project demonstrates:
+
+* End-to-end ML system design
+* Fraud detection
+* Imbalanced classification
+* Vector DB integration
+* Similarity search
+* FastAPI model serving
+* MLflow experiment tracking
+* Dockerized infrastructure
+* Data validation
+* Production-style MLOps thinking
+
+Suggested CV bullet:
+
+```text
+Built an end-to-end fraud detection MLOps platform combining tabular ML models with Milvus vector similarity search for case-based fraud reasoning. Implemented FastAPI serving, MLflow experiment tracking, Dockerized Milvus infrastructure, validation reports, and API endpoints for fraud scoring and similar-case retrieval.
+```
+
+Alternative shorter bullet:
+
+```text
+Developed a production-style fraud detection platform using XGBoost, Milvus Vector DB, FastAPI, Docker, and MLflow, enabling real-time fraud scoring and retrieval of similar historical fraud cases.
+```
