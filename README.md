@@ -37,18 +37,9 @@ The goal of this project is to demonstrate a realistic fraud detection architect
 * Vector similarity search for finding similar historical cases
 * Milvus Vector DB for case-based fraud reasoning
 * MLflow experiment tracking
-* Data validation reports
 * FastAPI model serving
 * Docker Compose infrastructure
-* Synthetic smoke-test dataset generation
-* Reproducible local development on Windows
 * API testing through Swagger and curl
-
-The core idea is:
-
-> A fraud model should not only return a fraud probability.
-> It should also show similar past cases, especially similar fraud cases, to support investigation and explainability.
-
 ---
 
 ## Architecture
