@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from fraud_vector_db_mlops.config import get_settings
-
 
 st.set_page_config(page_title="Fraud Vector MLOps", layout="wide")
 st.title("Fraud Vector DB MLOps Dashboard")

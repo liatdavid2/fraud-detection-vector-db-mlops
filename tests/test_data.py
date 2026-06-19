@@ -1,5 +1,6 @@
-from fraud_vector_db_mlops.data import detect_target_column, make_synthetic_dataset
 import pandas as pd
+
+from fraud_vector_db_mlops.data import detect_target_column, make_synthetic_dataset
 
 
 def test_detect_target_column():
