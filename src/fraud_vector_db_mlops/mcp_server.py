@@ -15,7 +15,18 @@ from fraud_vector_db_mlops.api import (
 )
 from fraud_vector_db_mlops.config import get_settings
 from fraud_vector_db_mlops.milvus_store import MilvusVectorStore
+import os
+from pathlib import Path
 
+
+PROJECT_ROOT = Path(
+    os.environ.get(
+        "FRAUD_PROJECT_ROOT",
+        Path(__file__).resolve().parents[2],
+    )
+)
+
+os.chdir(PROJECT_ROOT)
 
 mcp = FastMCP("fraud-vector-db-mlops")
 
