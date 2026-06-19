@@ -24,8 +24,7 @@ class PredictResponse(BaseModel):
     risk_level: str
     alert: bool
     reason_codes: list[str]
-    vector_features: dict[str, float]
-    similar_cases: list[dict[str, Any]]
+    similar_cases: list[dict[str, Any]] | None = None
     model_explanation: dict[str, Any]
     model_path: str
 
@@ -124,6 +123,20 @@ def json_safe_value(value: Any) -> Any:
 
     return value
 
+def fraud_similar_cases_only(
+    similar_cases: list[dict[str, Any]],
+    top_n: int = 5,
+) -> list[dict[str, Any]] | None:
+    fraud_cases = [
+        case
+        for case in similar_cases
+        if int(case.get("label", 0)) == 1
+    ]
+
+    if not fraud_cases:
+        return None
+
+    return fraud_cases[:top_n]
 
 def prepare_model_matrix(model: Any, df: pd.DataFrame) -> tuple[Any, list[str]]:
     """Apply the same preprocessing used during training.
@@ -492,7 +505,7 @@ def health() -> dict[str, str]:
     }
 
 
-@app.post("/predict", response_model=PredictResponse)
+@app.post("/predict", response_model=PredictResponse, response_model_exclude_none=True)
 def predict(request: PredictRequest) -> PredictResponse:
     settings = get_settings()
 
@@ -527,8 +540,7 @@ def predict(request: PredictRequest) -> PredictResponse:
         risk_level=risk_level,
         alert=alert,
         reason_codes=scored["reason_codes"],
-        vector_features=scored["vector_features"],
-        similar_cases=scored["similar_cases"][:5],
+        similar_cases=fraud_similar_cases_only(scored["similar_cases"], top_n=5),
         model_explanation=build_model_explanation(
             probability=probability,
             decision=decision,
@@ -550,10 +562,15 @@ def similar_cases(request: PredictRequest, top_k: int = 10) -> dict[str, Any]:
         store = MilvusVectorStore(vector_dim=model.embedding_dim)
         results = store.search(embedding, top_k=top_k)
 
-        return {
-            "source": "milvus",
-            "similar_cases": [r.__dict__ for r in results],
-        }
+        all_cases = [r.__dict__ for r in results]
+        fraud_cases = fraud_similar_cases_only(all_cases, top_n=top_k)
+
+        response = {"source": "milvus"}
+
+        if fraud_cases is not None:
+            response["similar_cases"] = fraud_cases
+
+        return response
 
     except Exception as exc:
         # Fallback to in-model nearest neighbors if Milvus is not running.
@@ -561,8 +578,15 @@ def similar_cases(request: PredictRequest, top_k: int = 10) -> dict[str, Any]:
         df = pd.DataFrame([request.features])
         local_results = model.similarity_to_training(df, top_k=top_k)[0]
 
-        return {
+        all_cases = [r.__dict__ for r in local_results]
+        fraud_cases = fraud_similar_cases_only(all_cases, top_n=top_k)
+
+        response = {
             "source": "local_model_fallback",
             "warning": str(exc),
-            "similar_cases": [r.__dict__ for r in local_results],
         }
+
+        if fraud_cases is not None:
+            response["similar_cases"] = fraud_cases
+
+        return response
