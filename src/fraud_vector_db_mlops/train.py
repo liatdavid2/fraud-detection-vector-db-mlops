@@ -184,6 +184,10 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
     best_y_pred: np.ndarray | None = None
 
     for experiment_name, classifier_name, use_vector_features in candidates:
+        print("=" * 80)
+        print(f"Starting experiment: {experiment_name}")
+        print(f"classifier={classifier_name}, use_vector_features={use_vector_features}")
+        print("=" * 80)
         with mlflow.start_run(run_name=experiment_name):
             mlflow.log_params(
                 {
@@ -226,6 +230,8 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
             all_results.append(row)
 
             mlflow.log_metrics(metrics)
+            print(f"Finished experiment: {experiment_name}")
+            print(json.dumps(metrics, indent=2))
 
             is_better = best_metrics is None or (
                 metrics["average_precision"], metrics["recall_at_top_5pct"]

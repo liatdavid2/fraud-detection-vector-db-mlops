@@ -11,36 +11,81 @@ from fraud_vector_db_mlops.config import get_settings
 
 TARGET_CANDIDATES = ["fraud_bool", "isFraud", "is_fraud", "Class", "class", "target", "label"]
 
+# Public Kaggle dataset slug for Bank Account Fraud Dataset Suite (NeurIPS 2022)
+BAF_KAGGLE_DATASET = "sgpjesus/bank-account-fraud-dataset-neurips-2022"
+
+# Prefer the base dataset for the main benchmark. Variants can be used later for fairness/drift experiments.
+BAF_PREFERRED_FILES = [
+    "Base.csv",
+    "Variant I.csv",
+    "Variant II.csv",
+    "Variant III.csv",
+    "Variant IV.csv",
+    "Variant V.csv",
+]
+
 
 def _find_csv_files(path: Path) -> list[Path]:
     return sorted(path.rglob("*.csv"))
 
 
 def download_dataset() -> Path:
-    """Download BAF dataset using kagglehub and copy CSVs into data/raw."""
+    """Download the real BAF dataset using kagglehub and copy CSVs into data/raw.
+
+    This function downloads the Bank Account Fraud Dataset Suite (NeurIPS 2022)
+    from Kaggle using the slug configured in configs/config.yaml.
+    """
     settings = get_settings()
+
     try:
         import kagglehub
     except ImportError as exc:
         raise RuntimeError("kagglehub is not installed. Run: pip install kagglehub") from exc
 
-    downloaded_path = Path(kagglehub.dataset_download(settings.dataset_name))
+    dataset_name = settings.dataset_name or BAF_KAGGLE_DATASET
+    print(f"Downloading real BAF dataset from Kaggle: {dataset_name}")
+
+    try:
+        downloaded_path = Path(kagglehub.dataset_download(dataset_name))
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to download the BAF dataset through kagglehub.\n"
+            "Check that your internet connection works and that Kaggle access is configured if required.\n"
+            "You can also manually download the dataset from Kaggle and place Base.csv under data/raw/."
+        ) from exc
+
     csv_files = _find_csv_files(downloaded_path)
     if not csv_files:
-        raise FileNotFoundError(f"No CSV files found under {downloaded_path}")
+        raise FileNotFoundError(f"No CSV files found under downloaded path: {downloaded_path}")
 
+    settings.data_path.mkdir(parents=True, exist_ok=True)
+
+    copied: list[Path] = []
     for csv_file in csv_files:
         destination = settings.data_path / csv_file.name
         shutil.copy2(csv_file, destination)
+        copied.append(destination)
 
-    print(f"Downloaded dataset to: {settings.data_path}")
-    for f in _find_csv_files(settings.data_path):
-        print(f" - {f.name}")
+    print(f"Downloaded/copied BAF CSV files to: {settings.data_path}")
+    for file_path in copied:
+        print(f" - {file_path.name}")
+
+    selected = find_dataset_file()
+    print(f"Selected dataset file for training: {selected}")
     return settings.data_path
 
 
 def find_dataset_file(preferred: str | None = None) -> Path:
+    """Find the CSV file that should be used for training.
+
+    Priority:
+    1. Explicit preferred path, if provided.
+    2. Real BAF Base.csv.
+    3. Other BAF variants.
+    4. Largest CSV file under data/raw.
+    """
     settings = get_settings()
+
     if preferred:
         candidate = Path(preferred)
         if not candidate.is_absolute():
@@ -52,16 +97,17 @@ def find_dataset_file(preferred: str | None = None) -> Path:
     csv_files = _find_csv_files(settings.data_path)
     if not csv_files:
         raise FileNotFoundError(
-            "No CSV dataset found in data/raw. Run: python -m fraud_vector_db_mlops.data --download "
-            "or python -m fraud_vector_db_mlops.data --make-sample"
+            "No CSV dataset found in data/raw.\n"
+            "Run: python -m fraud_vector_db_mlops.data --download\n"
+            "or manually place Base.csv under data/raw/."
         )
 
-    # Prefer Base.csv / Variant I if present, otherwise largest file.
-    preferred_names = ["Base.csv", "Variant I.csv", "Variant II.csv"]
-    for name in preferred_names:
-        for f in csv_files:
-            if f.name.lower() == name.lower():
-                return f
+    lower_to_file = {file_path.name.lower(): file_path for file_path in csv_files}
+    for file_name in BAF_PREFERRED_FILES:
+        found = lower_to_file.get(file_name.lower())
+        if found is not None:
+            return found
+
     return max(csv_files, key=lambda p: p.stat().st_size)
 
 
@@ -76,31 +122,91 @@ def detect_target_column(df: pd.DataFrame, requested: str | None = None) -> str:
     )
 
 
+def add_application_id_if_missing(df: pd.DataFrame, prefix: str = "BAF") -> pd.DataFrame:
+    """Add a stable application_id column if the real BAF file does not include one."""
+    if "application_id" in df.columns:
+        return df
+    df = df.copy()
+    df.insert(0, "application_id", [f"{prefix}-{i:07d}" for i in range(len(df))])
+    return df
+
+
+def sample_preserving_fraud_rate(
+    df: pd.DataFrame,
+    target: str,
+    max_rows: int | None,
+    random_state: int,
+) -> pd.DataFrame:
+    """Sample rows while preserving the original fraud rate as much as possible.
+
+    This replaces the earlier smoke-test sampling behavior that oversampled fraud.
+    For a real BAF benchmark we want the train/test data to keep the natural class imbalance.
+    """
+    if not max_rows or len(df) <= max_rows:
+        return df
+
+    y = pd.to_numeric(df[target], errors="coerce").fillna(0).astype(int)
+    fraud_df = df[y == 1]
+    legit_df = df[y == 0]
+
+    if len(fraud_df) == 0 or len(legit_df) == 0:
+        return df.sample(n=max_rows, random_state=random_state)
+
+    fraud_rate = len(fraud_df) / len(df)
+    fraud_n = int(round(max_rows * fraud_rate))
+    fraud_n = max(1, min(fraud_n, len(fraud_df)))
+    legit_n = max_rows - fraud_n
+    legit_n = max(1, min(legit_n, len(legit_df)))
+
+    sampled = pd.concat(
+        [
+            fraud_df.sample(n=fraud_n, random_state=random_state),
+            legit_df.sample(n=legit_n, random_state=random_state),
+        ],
+        axis=0,
+    )
+    return sampled.sample(frac=1, random_state=random_state).reset_index(drop=True)
+
+
 def load_dataset(path: str | Path | None = None, max_rows: int | None = None) -> tuple[pd.DataFrame, str]:
     settings = get_settings()
     file_path = find_dataset_file(str(path) if path else None)
-    df = pd.read_csv(file_path)
-    target = detect_target_column(df, settings.target_column)
+    print(f"Loading dataset: {file_path}")
 
-    if max_rows and len(df) > max_rows:
-        # Stratified-ish sampling to preserve minority fraud cases.
-        fraud = df[df[target] == 1]
-        legit = df[df[target] == 0]
-        fraud_n = min(len(fraud), max(1000, int(max_rows * 0.2)))
-        legit_n = max_rows - fraud_n
-        df = pd.concat(
-            [
-                fraud.sample(n=fraud_n, random_state=settings.random_state),
-                legit.sample(n=min(len(legit), legit_n), random_state=settings.random_state),
-            ],
-            axis=0,
-        ).sample(frac=1, random_state=settings.random_state)
+    df = pd.read_csv(file_path, low_memory=False)
+    target = detect_target_column(df, settings.target_column)
+    df = add_application_id_if_missing(df, prefix="BAF")
+
+    # Ensure target is numeric 0/1 for all downstream model/metric code.
+    df[target] = pd.to_numeric(df[target], errors="coerce").fillna(0).astype(int)
+
+    original_rows = len(df)
+    original_fraud_rate = float(df[target].mean()) if len(df) else 0.0
+
+    df = sample_preserving_fraud_rate(
+        df=df,
+        target=target,
+        max_rows=max_rows,
+        random_state=settings.random_state,
+    )
+
+    print(
+        "Dataset loaded: "
+        f"rows={len(df):,} / original_rows={original_rows:,}, "
+        f"fraud_rate={df[target].mean():.4%}, "
+        f"original_fraud_rate={original_fraud_rate:.4%}, "
+        f"target={target}"
+    )
 
     return df, target
 
 
 def make_synthetic_dataset(n_rows: int = 15000, output: str | Path | None = None) -> Path:
-    """Small synthetic dataset for CI/smoke tests; not a replacement for BAF."""
+    """Small synthetic dataset for CI/smoke tests only.
+
+    This is not a replacement for the real BAF benchmark.
+    Use scripts/train_real_dataset.cmd for the real project results.
+    """
     settings = get_settings()
     rng = np.random.default_rng(settings.random_state)
 
@@ -153,15 +259,19 @@ def make_synthetic_dataset(n_rows: int = 15000, output: str | Path | None = None
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--download", action="store_true", help="Download BAF dataset from Kaggle")
+    parser.add_argument("--download", action="store_true", help="Download real BAF dataset from Kaggle")
+    parser.add_argument("--download-baf", action="store_true", help="Alias for --download")
     parser.add_argument("--make-sample", action="store_true", help="Create synthetic smoke-test dataset")
     parser.add_argument("--rows", type=int, default=15000, help="Rows for synthetic sample")
+    parser.add_argument("--show-selected", action="store_true", help="Print selected dataset file")
     args = parser.parse_args()
 
-    if args.download:
+    if args.download or args.download_baf:
         download_dataset()
     elif args.make_sample:
         make_synthetic_dataset(n_rows=args.rows)
+    elif args.show_selected:
+        print(find_dataset_file())
     else:
         path = find_dataset_file()
         print(path)

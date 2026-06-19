@@ -6,12 +6,13 @@ data:
   raw_path: data/raw
   processed_path: data/processed
   target_column: fraud_bool
-  max_train_rows: 200000
+  # Keep this capped for local laptop runtime. Set to 50000 or remove cap later if needed.
+  max_train_rows: 50000
 
 model:
-  model_type: xgboost_if_available
+  model_type: model_comparison
   embedding_dim: 32
-  n_neighbors: 20
+  n_neighbors: 10
   threshold_review: 0.35
   threshold_decline: 0.75
 
