@@ -25,15 +25,18 @@ class SimilarCase:
 class FraudVectorModel:
     """Hybrid fraud model: tabular ML plus nearest-neighbor fraud similarity features.
 
-    The model supports two experiment modes:
+    The model supports:
     1. Tabular only: use_vector_features=False
     2. Tabular + vector similarity features: use_vector_features=True
 
-    It also supports several classifier families through classifier_name:
+    Supported classifier families:
     - xgboost
     - lightgbm
     - catboost
     - logistic_regression
+
+    The class also includes a lightweight local explanation method:
+    explain_local_feature_impact()
     """
 
     def __init__(
@@ -75,6 +78,7 @@ class FraudVectorModel:
     def _build_preprocessor(self, X: pd.DataFrame) -> ColumnTransformer:
         numeric_cols = X.select_dtypes(include=["number", "bool"]).columns.tolist()
         categorical_cols = [c for c in X.columns if c not in numeric_cols]
+
         self.numeric_columns_ = numeric_cols
         self.categorical_columns_ = categorical_cols
 
@@ -84,15 +88,21 @@ class FraudVectorModel:
                 ("scaler", StandardScaler()),
             ]
         )
+
         categorical_pipeline = Pipeline(
             steps=[
                 ("imputer", SimpleImputer(strategy="most_frequent")),
                 (
                     "onehot",
-                    OneHotEncoder(handle_unknown="ignore", sparse_output=True, max_categories=30),
+                    OneHotEncoder(
+                        handle_unknown="ignore",
+                        sparse_output=True,
+                        max_categories=30,
+                    ),
                 ),
             ]
         )
+
         return ColumnTransformer(
             transformers=[
                 ("num", numeric_pipeline, numeric_cols),
@@ -185,23 +195,34 @@ class FraudVectorModel:
     def _fit_embeddings(self, X_processed: sparse.csr_matrix) -> np.ndarray:
         n_features = X_processed.shape[1]
         n_components = max(2, min(self.embedding_dim, n_features - 1))
-        self.svd_ = TruncatedSVD(n_components=n_components, random_state=self.random_state)
+
+        self.svd_ = TruncatedSVD(
+            n_components=n_components,
+            random_state=self.random_state,
+        )
+
         embeddings = self.svd_.fit_transform(X_processed)
+
         if embeddings.shape[1] < self.embedding_dim:
             pad = np.zeros((embeddings.shape[0], self.embedding_dim - embeddings.shape[1]))
             embeddings = np.hstack([embeddings, pad])
+
         embeddings = normalize(embeddings[:, : self.embedding_dim], norm="l2")
         return np.asarray(embeddings, dtype="float32")
 
     def transform_to_embeddings(self, X: pd.DataFrame) -> np.ndarray:
         if self.preprocessor_ is None or self.svd_ is None or self.feature_columns_ is None:
             raise RuntimeError("Model is not fitted.")
+
         X = self._prepare_features(X)
         X_processed = self._ensure_sparse(self.preprocessor_.transform(X))
+
         embeddings = self.svd_.transform(X_processed)
+
         if embeddings.shape[1] < self.embedding_dim:
             pad = np.zeros((embeddings.shape[0], self.embedding_dim - embeddings.shape[1]))
             embeddings = np.hstack([embeddings, pad])
+
         embeddings = normalize(embeddings[:, : self.embedding_dim], norm="l2")
         return np.asarray(embeddings, dtype="float32")
 
@@ -211,13 +232,22 @@ class FraudVectorModel:
         self.nn_.fit(embeddings)
 
     def _vector_features(
-        self, embeddings: np.ndarray, exclude_self: bool = False
+        self,
+        embeddings: np.ndarray,
+        exclude_self: bool = False,
     ) -> tuple[np.ndarray, list[list[SimilarCase]]]:
         if self.nn_ is None or self.train_labels_ is None or self.train_application_ids_ is None:
             raise RuntimeError("Nearest-neighbor index is not fitted.")
 
-        n_query_neighbors = min(self.n_neighbors + int(exclude_self), len(self.train_labels_))
-        distances, indices = self.nn_.kneighbors(embeddings, n_neighbors=n_query_neighbors)
+        n_query_neighbors = min(
+            self.n_neighbors + int(exclude_self),
+            len(self.train_labels_),
+        )
+
+        distances, indices = self.nn_.kneighbors(
+            embeddings,
+            n_neighbors=n_query_neighbors,
+        )
 
         features: list[list[float]] = []
         similar_cases: list[list[SimilarCase]] = []
@@ -229,6 +259,7 @@ class FraudVectorModel:
 
             labels = self.train_labels_[row_indices]
             similarities = 1 - row_distances
+
             top5 = min(5, len(labels))
             top20 = min(20, len(labels))
 
@@ -265,23 +296,34 @@ class FraudVectorModel:
     def _prepare_features(self, X: pd.DataFrame) -> pd.DataFrame:
         if self.feature_columns_ is None:
             raise RuntimeError("Feature columns are not initialized.")
+
         X = X.copy()
+
         for col in self.feature_columns_:
             if col not in X.columns:
                 X[col] = np.nan
+
         return X[self.feature_columns_]
 
-    def fit(self, X: pd.DataFrame, y: pd.Series, application_ids: pd.Series | None = None) -> "FraudVectorModel":
+    def fit(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        application_ids: pd.Series | None = None,
+    ) -> FraudVectorModel:
         self.feature_columns_ = [
             c for c in X.columns if c != self.target_column and c != "application_id"
         ]
+
         X = self._prepare_features(X)
         self.preprocessor_ = self._build_preprocessor(X)
         X_processed = self._ensure_sparse(self.preprocessor_.fit_transform(X))
 
         embeddings = self._fit_embeddings(X_processed)
+
         self.train_embeddings_ = embeddings
         self.train_labels_ = np.asarray(y).astype(int)
+
         if application_ids is None:
             self.train_application_ids_ = [f"train-{i}" for i in range(len(X))]
         else:
@@ -291,24 +333,35 @@ class FraudVectorModel:
 
         if self.use_vector_features:
             vector_features, _ = self._vector_features(embeddings, exclude_self=True)
-            X_model = sparse.hstack([X_processed, sparse.csr_matrix(vector_features)], format="csr")
+            X_model = sparse.hstack(
+                [X_processed, sparse.csr_matrix(vector_features)],
+                format="csr",
+            )
         else:
             X_model = X_processed
 
         self.model_ = self._build_classifier(y)
         self.model_.fit(X_model, y)
+
         return self
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         if self.preprocessor_ is None or self.model_ is None:
             raise RuntimeError("Model is not fitted.")
+
         X_prepared = self._prepare_features(X)
         X_processed = self._ensure_sparse(self.preprocessor_.transform(X_prepared))
 
         if self.use_vector_features:
             embeddings = self.transform_to_embeddings(X)
-            vector_features, _ = self._vector_features(embeddings, exclude_self=False)
-            X_model = sparse.hstack([X_processed, sparse.csr_matrix(vector_features)], format="csr")
+            vector_features, _ = self._vector_features(
+                embeddings,
+                exclude_self=False,
+            )
+            X_model = sparse.hstack(
+                [X_processed, sparse.csr_matrix(vector_features)],
+                format="csr",
+            )
         else:
             X_model = X_processed
 
@@ -318,12 +371,23 @@ class FraudVectorModel:
     def score_with_context(self, X: pd.DataFrame) -> list[dict[str, Any]]:
         probas = self.predict_proba(X)[:, 1]
         embeddings = self.transform_to_embeddings(X)
-        vector_features, similar_cases = self._vector_features(embeddings, exclude_self=False)
+        vector_features, similar_cases = self._vector_features(
+            embeddings,
+            exclude_self=False,
+        )
 
         results: list[dict[str, Any]] = []
+
         for i, fraud_probability in enumerate(probas):
-            vf = dict(zip(self.vector_feature_names_, vector_features[i].tolist(), strict=False))
+            vf = dict(
+                zip(
+                    self.vector_feature_names_,
+                    vector_features[i].tolist(),
+                    strict=False,
+                )
+            )
             reasons = self.reason_codes(float(fraud_probability), vf)
+
             results.append(
                 {
                     "fraud_probability": float(fraud_probability),
@@ -332,32 +396,215 @@ class FraudVectorModel:
                     "similar_cases": [case.__dict__ for case in similar_cases[i]],
                 }
             )
+
         return results
 
     @staticmethod
-    def reason_codes(fraud_probability: float, vector_features: dict[str, float]) -> list[str]:
+    def reason_codes(
+        fraud_probability: float,
+        vector_features: dict[str, float],
+    ) -> list[str]:
         reasons: list[str] = []
+
         if fraud_probability >= 0.75:
             reasons.append("High model fraud probability")
+
         if vector_features.get("neighbor_fraud_rate_top_20", 0) >= 0.25:
             reasons.append("High fraud rate among similar historical cases")
+
         if vector_features.get("nearest_fraud_similarity", 0) >= 0.85:
             reasons.append("Very similar to at least one known fraud case")
+
         if vector_features.get("fraud_neighbors_top_20", 0) >= 3:
             reasons.append("Multiple fraud cases found in nearest-neighbor cluster")
+
         if not reasons:
             reasons.append("No strong fraud similarity signal detected")
+
         return reasons
 
     def get_training_embeddings_frame(self) -> pd.DataFrame:
-        if self.train_embeddings_ is None or self.train_labels_ is None or self.train_application_ids_ is None:
+        if (
+            self.train_embeddings_ is None
+            or self.train_labels_ is None
+            or self.train_application_ids_ is None
+        ):
             raise RuntimeError("Model is not fitted.")
+
         df = pd.DataFrame(self.train_embeddings_)
         df.insert(0, "application_id", self.train_application_ids_)
         df["label"] = self.train_labels_
         return df
 
-    def similarity_to_training(self, X: pd.DataFrame, top_k: int = 10) -> list[list[SimilarCase]]:
+    def similarity_to_training(
+        self,
+        X: pd.DataFrame,
+        top_k: int = 10,
+    ) -> list[list[SimilarCase]]:
         embeddings = self.transform_to_embeddings(X)
         _, similar = self._vector_features(embeddings, exclude_self=False)
         return [cases[:top_k] for cases in similar]
+
+    @staticmethod
+    def _json_safe_value(value: Any) -> Any:
+        if value is None:
+            return None
+
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+
+        if isinstance(value, np.generic):
+            return value.item()
+
+        return value
+
+    def _baseline_values_from_preprocessor(self) -> dict[str, Any]:
+        """Return training baseline values used for local explanations.
+
+        Numeric features use the median learned by SimpleImputer.
+        Categorical features use the most frequent value learned by SimpleImputer.
+        """
+        if self.preprocessor_ is None:
+            raise RuntimeError("Model is not fitted.")
+
+        baseline: dict[str, Any] = {}
+
+        if self.numeric_columns_:
+            numeric_pipeline = self.preprocessor_.named_transformers_.get("num")
+            if numeric_pipeline is not None:
+                numeric_imputer = numeric_pipeline.named_steps["imputer"]
+                for col, value in zip(
+                    self.numeric_columns_,
+                    numeric_imputer.statistics_,
+                    strict=False,
+                ):
+                    baseline[col] = float(value) if pd.notna(value) else 0.0
+
+        if self.categorical_columns_:
+            categorical_pipeline = self.preprocessor_.named_transformers_.get("cat")
+            if categorical_pipeline is not None:
+                categorical_imputer = categorical_pipeline.named_steps["imputer"]
+                for col, value in zip(
+                    self.categorical_columns_,
+                    categorical_imputer.statistics_,
+                    strict=False,
+                ):
+                    baseline[col] = value
+
+        return baseline
+
+    def explain_local_feature_impact(
+        self,
+        X: pd.DataFrame,
+        top_n: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Explain one prediction using a fast model-agnostic local impact method.
+
+        For each input feature, the method replaces that feature with its training
+        baseline value and recalculates the fraud probability.
+
+        impact = original_probability - probability_after_replacing_feature
+
+        Positive impact means the current feature value increases risk.
+        Negative impact means the current feature value decreases risk.
+        """
+        if len(X) != 1:
+            raise ValueError("Local explanation expects exactly one row.")
+
+        if self.feature_columns_ is None:
+            raise RuntimeError("Model is not fitted.")
+
+        X_prepared = self._prepare_features(X)
+        original_probability = float(self.predict_proba(X_prepared)[:, 1][0])
+        baseline_values = self._baseline_values_from_preprocessor()
+
+        # Explain only features that were provided in the request.
+        # This avoids returning explanations for missing columns filled with NaN.
+        provided_features = set(X.columns)
+
+        features_to_check = [
+            col
+            for col in self.feature_columns_
+            if col in baseline_values and col in provided_features
+        ]
+
+        explanations: list[dict[str, Any]] = []
+
+        for feature in features_to_check:
+            original_value = X_prepared.iloc[0][feature]
+            baseline_value = baseline_values[feature]
+
+            X_changed = X_prepared.copy()
+            X_changed.loc[X_changed.index[0], feature] = baseline_value
+
+            changed_probability = float(self.predict_proba(X_changed)[:, 1][0])
+            impact = original_probability - changed_probability
+
+            if impact > 0:
+                direction = "increases_risk"
+            elif impact < 0:
+                direction = "decreases_risk"
+            else:
+                direction = "neutral"
+
+            explanations.append(
+                {
+                    "feature": feature,
+                    "value": self._json_safe_value(original_value),
+                    "baseline_value": self._json_safe_value(baseline_value),
+                    "fraud_probability": original_probability,
+                    "fraud_probability_without_feature_effect": changed_probability,
+                    "impact_on_fraud_probability": float(impact),
+                    "abs_impact": float(abs(impact)),
+                    "direction": direction,
+                }
+            )
+
+            explanations.sort(key=lambda item: item["abs_impact"], reverse=True)
+
+            feature_labels = {
+                "foreign_request": "Foreign request",
+                "name_email_similarity": "Low name-email similarity",
+                "velocity_6h": "High 6-hour application velocity",
+                "velocity_24h": "High 24-hour application velocity",
+                "velocity_4w": "High 4-week application velocity",
+                "bank_months_count": "Low bank account age",
+                "phone_home_valid": "Invalid home phone",
+                "phone_mobile_valid": "Invalid mobile phone",
+                "customer_age": "Customer age",
+                "credit_risk_score": "Credit risk score",
+                "proposed_credit_limit": "Requested credit limit",
+                "device_distinct_emails_8w": "Multiple emails from same device",
+                "device_fraud_count": "Previous device fraud count",
+                "date_of_birth_distinct_emails_4w": "Many emails linked to date of birth",
+                "days_since_request": "Very recent request",
+                "income": "Income level",
+            }
+
+            compact: list[dict[str, Any]] = []
+
+            for item in explanations[:top_n]:
+                feature = item["feature"]
+                label = feature_labels.get(feature, feature.replace("_", " ").title())
+                impact = float(item["impact_on_fraud_probability"])
+
+                if impact > 0:
+                    explanation = f"{label} increased the fraud probability."
+                elif impact < 0:
+                    explanation = f"{label} reduced the fraud probability."
+                else:
+                    explanation = f"{label} had little effect on the fraud probability."
+
+                compact.append(
+                    {
+                        "feature": feature,
+                        "explanation": explanation,
+                        "direction": item["direction"],
+                        "impact_on_fraud_probability": round(impact, 4),
+                    }
+                )
+
+            return compact
