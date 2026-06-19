@@ -20,7 +20,7 @@ In this run, the selected best model was `catboost_tabular`.
 ### Prediction API
 
 The `/predict` endpoint returns a fraud risk prediction for a single application.
-The request contains application features such as income, credit risk score, device/email signals, velocity features, and payment information.
+
 The response includes: Fraud probability, Risk level, Recommended decision, such as `manual_review`, Alert flag, Reason codes and SHAP-based feature explanations.
 When vector similarity is enabled, the API can also return similar historical applications to support human fraud review.
 
