@@ -19,3 +19,4 @@ xgboost>=2.0.0
 lightgbm>=4.0.0
 catboost>=1.2.0
 shap>=0.46.0,<0.53.0
+mcp>=1.6.0
