@@ -17,6 +17,9 @@ In this run, the selected best model was `catboost_tabular`.
 
 <img width="1918" height="956" alt="image" src="https://github.com/user-attachments/assets/b1128c7d-41f4-4f6a-b901-28909b8a5d2e" />
 
+<img width="1807" height="796" alt="image" src="https://github.com/user-attachments/assets/49de6cbe-fe7a-4702-9a9e-64c1302775eb" />
+<img width="1811" height="723" alt="image" src="https://github.com/user-attachments/assets/9320d008-d924-47ca-ae17-f85f4f22b03a" />
+
 ---
 
 ## Project Goals
