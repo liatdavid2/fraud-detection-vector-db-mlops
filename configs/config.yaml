@@ -1,0 +1,30 @@
+project_name: fraud-vector-db-mlops
+random_state: 42
+
+data:
+  dataset_name: sgpjesus/bank-account-fraud-dataset-neurips-2022
+  raw_path: data/raw
+  processed_path: data/processed
+  target_column: fraud_bool
+  max_train_rows: 200000
+
+model:
+  model_type: xgboost_if_available
+  embedding_dim: 32
+  n_neighbors: 20
+  threshold_review: 0.35
+  threshold_decline: 0.75
+
+mlflow:
+  tracking_uri: http://localhost:5000
+  experiment_name: fraud-vector-db-mlops
+
+milvus:
+  host: localhost
+  port: 19530
+  collection_name: fraud_cases
+  vector_dim: 32
+
+monitoring:
+  psi_warning_threshold: 0.1
+  psi_alert_threshold: 0.25
