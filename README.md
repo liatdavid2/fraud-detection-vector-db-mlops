@@ -4,7 +4,8 @@ Production-style fraud detection project that combines tabular machine learning,
 
 The system trains a fraud detection model, stores historical application embeddings in Milvus Vector DB, and exposes FastAPI endpoints for real-time fraud scoring and similar-case retrieval.
 
-This project is designed as an end-to-end AI/ML engineering portfolio project, not just a notebook.
+<img width="1908" height="643" alt="image" src="https://github.com/user-attachments/assets/9ea01535-1dd1-4903-9c08-adea8ef05173" />
+
 
 ---
 
