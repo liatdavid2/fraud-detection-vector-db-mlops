@@ -27,6 +27,15 @@ The response includes fraud probability, risk level, recommended decision such a
 <img width="1807" height="796" alt="image" src="https://github.com/user-attachments/assets/49de6cbe-fe7a-4702-9a9e-64c1302775eb" />
 <img width="1811" height="723" alt="image" src="https://github.com/user-attachments/assets/9320d008-d924-47ca-ae17-f85f4f22b03a" />
 
+### Similar Case Retrieval with Milvus
+
+The `/similar-cases` endpoint demonstrates retrieval-augmented fraud investigation using Milvus Vector DB.
+`label = 1` means the retrieved historical case was a confirmed fraud case.
+This gives the fraud analyst additional investigation context, instead of relying only on the model probability.
+The model does not make the final decision. It provides a risk score, SHAP explanation, and similar historical cases to support human review.
+
+<img width="1882" height="565" alt="image" src="https://github.com/user-attachments/assets/88fc72a2-7344-419c-8296-bfbdc9b9827a" />
+
 ---
 
 ## Project Goals
