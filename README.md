@@ -21,8 +21,8 @@ In this run, the selected best model was `catboost_tabular`.
 
 The `/predict` endpoint returns a fraud risk prediction for a single application.
 
-The response includes: Fraud probability, Risk level, Recommended decision, such as `manual_review`, Alert flag, Reason codes and SHAP-based feature explanations.
-When vector similarity is enabled, the API can also return similar historical applications to support human fraud review.
+The response includes fraud probability, risk level, recommended decision such as `manual_review`, alert flag, reason codes, and SHAP-based feature explanations, and when vector similarity is enabled, the API can also return similar historical applications to support human fraud review.
+
 
 <img width="1807" height="796" alt="image" src="https://github.com/user-attachments/assets/49de6cbe-fe7a-4702-9a9e-64c1302775eb" />
 <img width="1811" height="723" alt="image" src="https://github.com/user-attachments/assets/9320d008-d924-47ca-ae17-f85f4f22b03a" />
