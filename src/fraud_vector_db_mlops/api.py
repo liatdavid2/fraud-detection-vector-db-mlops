@@ -310,7 +310,6 @@ def catboost_real_shap(
 
     # CatBoost returns [feature_shap_values..., expected_value]
     shap_values = np.asarray(shap_matrix)[0, :-1]
-    expected_value = float(np.asarray(shap_matrix)[0, -1])
 
     rows = aggregate_to_original_features(
         values=shap_values,
@@ -322,13 +321,8 @@ def catboost_real_shap(
     )
 
     return {
-        "method": "catboost_real_shap_values",
-        "method_note": (
-            "Real SHAP values computed using CatBoost native "
-            "get_feature_importance(type='ShapValues'). Values are in model-output space."
-        ),
-        "expected_value": round(expected_value, 6),
-        "top_contributions": rows[:top_n],
+    "method": "catboost_real_shap_values",
+    "top_contributions": rows[:top_n],
     }
 
 
@@ -359,11 +353,6 @@ def tree_explainer_real_shap(
 
     values = shap_values[0]
 
-    expected_value = getattr(explainer, "expected_value", None)
-    if isinstance(expected_value, list):
-        expected_value = expected_value[-1]
-    if isinstance(expected_value, np.ndarray):
-        expected_value = expected_value.tolist()
 
     rows = aggregate_to_original_features(
         values=values,
@@ -376,11 +365,6 @@ def tree_explainer_real_shap(
 
     return {
         "method": "shap_tree_explainer",
-        "method_note": (
-            "Real SHAP values computed with shap.TreeExplainer. "
-            "Values are in model-output space."
-        ),
-        "expected_value": json_safe_value(expected_value),
         "top_contributions": rows[:top_n],
     }
 
@@ -428,13 +412,9 @@ def real_model_feature_importance(
     )
 
     return {
-        "method": "real_model_feature_importance",
-        "method_note": (
-            "Global feature importance taken directly from the trained model "
-            "using feature_importances_ / get_feature_importance / coef_."
-        ),
-        "fallback_reason": error,
-        "top_contributions": rows[:top_n],
+    "method": "model_feature_importance",
+    "fallback_reason": error,
+    "top_contributions": rows[:top_n],
     }
 
 
