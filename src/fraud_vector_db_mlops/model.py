@@ -10,7 +10,6 @@ from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import TruncatedSVD
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.neighbors import NearestNeighbors
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler, normalize
@@ -24,7 +23,18 @@ class SimilarCase:
 
 
 class FraudVectorModel:
-    """Hybrid fraud model: tabular ML plus nearest-neighbor fraud similarity features."""
+    """Hybrid fraud model: tabular ML plus nearest-neighbor fraud similarity features.
+
+    The model supports two experiment modes:
+    1. Tabular only: use_vector_features=False
+    2. Tabular + vector similarity features: use_vector_features=True
+
+    It also supports several classifier families through classifier_name:
+    - xgboost
+    - lightgbm
+    - catboost
+    - logistic_regression
+    """
 
     def __init__(
         self,
@@ -32,11 +42,16 @@ class FraudVectorModel:
         embedding_dim: int = 32,
         n_neighbors: int = 20,
         random_state: int = 42,
+        classifier_name: str = "xgboost",
+        use_vector_features: bool = True,
     ) -> None:
         self.target_column = target_column
         self.embedding_dim = embedding_dim
         self.n_neighbors = n_neighbors
         self.random_state = random_state
+        self.classifier_name = classifier_name.lower().strip()
+        self.use_vector_features = use_vector_features
+
         self.feature_columns_: list[str] | None = None
         self.numeric_columns_: list[str] | None = None
         self.categorical_columns_: list[str] | None = None
@@ -47,6 +62,7 @@ class FraudVectorModel:
         self.train_embeddings_: np.ndarray | None = None
         self.train_labels_: np.ndarray | None = None
         self.train_application_ids_: list[str] | None = None
+
         self.vector_feature_names_ = [
             "neighbor_fraud_rate_top_5",
             "neighbor_fraud_rate_top_20",
@@ -92,28 +108,79 @@ class FraudVectorModel:
             return matrix.tocsr()
         return sparse.csr_matrix(matrix)
 
-    def _build_classifier(self) -> Any:
-        try:
-            from xgboost import XGBClassifier
+    def _build_classifier(self, y: pd.Series) -> Any:
+        y_arr = np.asarray(y).astype(int)
+        positives = max(int(y_arr.sum()), 1)
+        negatives = max(int(len(y_arr) - positives), 1)
+        scale_pos_weight = negatives / positives
 
-            return XGBClassifier(
-                n_estimators=250,
-                max_depth=4,
+        if self.classifier_name == "xgboost":
+            try:
+                from xgboost import XGBClassifier
+
+                return XGBClassifier(
+                    n_estimators=300,
+                    max_depth=4,
+                    learning_rate=0.05,
+                    subsample=0.9,
+                    colsample_bytree=0.8,
+                    eval_metric="logloss",
+                    tree_method="hist",
+                    scale_pos_weight=scale_pos_weight,
+                    random_state=self.random_state,
+                    n_jobs=2,
+                )
+            except Exception:
+                return LogisticRegression(
+                    max_iter=1000,
+                    class_weight="balanced",
+                    n_jobs=2,
+                    random_state=self.random_state,
+                )
+
+        if self.classifier_name == "lightgbm":
+            from lightgbm import LGBMClassifier
+
+            return LGBMClassifier(
+                n_estimators=300,
                 learning_rate=0.05,
+                num_leaves=31,
+                max_depth=-1,
                 subsample=0.9,
                 colsample_bytree=0.8,
-                eval_metric="logloss",
-                tree_method="hist",
+                class_weight="balanced",
                 random_state=self.random_state,
                 n_jobs=2,
+                verbose=-1,
             )
-        except Exception:
+
+        if self.classifier_name == "catboost":
+            from catboost import CatBoostClassifier
+
+            return CatBoostClassifier(
+                iterations=300,
+                depth=5,
+                learning_rate=0.05,
+                loss_function="Logloss",
+                eval_metric="AUC",
+                auto_class_weights="Balanced",
+                random_seed=self.random_state,
+                verbose=False,
+                allow_writing_files=False,
+            )
+
+        if self.classifier_name in {"logistic", "logistic_regression", "baseline"}:
             return LogisticRegression(
                 max_iter=1000,
                 class_weight="balanced",
                 n_jobs=2,
                 random_state=self.random_state,
             )
+
+        raise ValueError(
+            "Unsupported classifier_name. Use one of: "
+            "xgboost, lightgbm, catboost, logistic_regression"
+        )
 
     def _fit_embeddings(self, X_processed: sparse.csr_matrix) -> np.ndarray:
         n_features = X_processed.shape[1]
@@ -221,11 +288,15 @@ class FraudVectorModel:
             self.train_application_ids_ = application_ids.astype(str).tolist()
 
         self._fit_nn(embeddings)
-        vector_features, _ = self._vector_features(embeddings, exclude_self=True)
-        X_augmented = sparse.hstack([X_processed, sparse.csr_matrix(vector_features)], format="csr")
 
-        self.model_ = self._build_classifier()
-        self.model_.fit(X_augmented, y)
+        if self.use_vector_features:
+            vector_features, _ = self._vector_features(embeddings, exclude_self=True)
+            X_model = sparse.hstack([X_processed, sparse.csr_matrix(vector_features)], format="csr")
+        else:
+            X_model = X_processed
+
+        self.model_ = self._build_classifier(y)
+        self.model_.fit(X_model, y)
         return self
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
@@ -233,10 +304,15 @@ class FraudVectorModel:
             raise RuntimeError("Model is not fitted.")
         X_prepared = self._prepare_features(X)
         X_processed = self._ensure_sparse(self.preprocessor_.transform(X_prepared))
-        embeddings = self.transform_to_embeddings(X)
-        vector_features, _ = self._vector_features(embeddings, exclude_self=False)
-        X_augmented = sparse.hstack([X_processed, sparse.csr_matrix(vector_features)], format="csr")
-        proba = self.model_.predict_proba(X_augmented)
+
+        if self.use_vector_features:
+            embeddings = self.transform_to_embeddings(X)
+            vector_features, _ = self._vector_features(embeddings, exclude_self=False)
+            X_model = sparse.hstack([X_processed, sparse.csr_matrix(vector_features)], format="csr")
+        else:
+            X_model = X_processed
+
+        proba = self.model_.predict_proba(X_model)
         return np.asarray(proba)
 
     def score_with_context(self, X: pd.DataFrame) -> list[dict[str, Any]]:
