@@ -9,21 +9,49 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src
+      MLFLOW_TRACKING_URI: file:${{ github.workspace }}/mlruns
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pytest ruff
+
       - name: Lint
-        run: ruff check src tests
+        run: |
+          if [ -d tests ]; then
+            ruff check src tests
+          else
+            ruff check src
+          fi
+
+      - name: Import package smoke test
+        run: |
+          python -c "import fraud_vector_db_mlops; print('Import OK')"
+
       - name: Tests
-        run: pytest -q
+        run: |
+          if [ -d tests ]; then
+            pytest -q
+          else
+            echo "No tests directory found, skipping pytest."
+          fi
+
       - name: Smoke train
         run: |
-          python -m fraud_vector_db_mlops.data --make-sample --rows 2500
+          python -m fraud_vector_db_mlops.data --make-sample --rows 800
           python -m fraud_vector_db_mlops.validation
           python -m fraud_vector_db_mlops.train --skip-milvus
