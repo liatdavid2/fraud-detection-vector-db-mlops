@@ -6,6 +6,11 @@ The system trains a fraud detection model, stores historical application embeddi
 
 <img width="1908" height="643" alt="image" src="https://github.com/user-attachments/assets/9ea01535-1dd1-4903-9c08-adea8ef05173" />
 
+### MLflow Tracking
+The screenshot shows the `best-model-artifacts` run, which stores the final selected model after comparing multiple fraud detection models.  
+In this run, the selected best model was `catboost_tabular`.
+
+<img width="1918" height="956" alt="image" src="https://github.com/user-attachments/assets/b1128c7d-41f4-4f6a-b901-28909b8a5d2e" />
 
 ---
 
