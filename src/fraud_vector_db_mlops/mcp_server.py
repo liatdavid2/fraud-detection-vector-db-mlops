@@ -1,22 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import urllib.request
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 from mcp.server.fastmcp import FastMCP
-
-from fraud_vector_db_mlops.api import (
-    build_model_explanation,
-    decision_from_probability,
-    explain_model_prediction,
-    load_model,
-)
-from fraud_vector_db_mlops.config import get_settings
-from fraud_vector_db_mlops.milvus_store import MilvusVectorStore
-import os
-from pathlib import Path
 
 
 PROJECT_ROOT = Path(
@@ -25,45 +15,34 @@ PROJECT_ROOT = Path(
         Path(__file__).resolve().parents[2],
     )
 )
-
 os.chdir(PROJECT_ROOT)
+
+API_BASE_URL = os.environ.get("FRAUD_API_BASE_URL", "http://localhost:8000")
 
 mcp = FastMCP("fraud-vector-db-mlops")
 
 
-@mcp.tool()
-def predict_fraud(features: dict[str, Any]) -> dict[str, Any]:
-    """Predict fraud risk and return a human-review alert with real SHAP explanation."""
-    settings = get_settings()
-    model = load_model()
+def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    data = json.dumps(payload).encode("utf-8")
 
-    df = pd.DataFrame([features])
-    scored = model.score_with_context(df)[0]
-
-    probability = float(scored["fraud_probability"])
-    decision, risk_level, alert = decision_from_probability(probability)
-
-    explanation = explain_model_prediction(
-        model=model,
-        df=df,
-        top_n=5,
+    request = urllib.request.Request(
+        url=url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
 
-    return {
-        "fraud_probability": probability,
-        "decision": decision,
-        "risk_level": risk_level,
-        "alert": alert,
-        "reason_codes": scored["reason_codes"],
-        "model_explanation": build_model_explanation(
-            probability=probability,
-            decision=decision,
-            risk_level=risk_level,
-            alert=alert,
-            explanation=explanation,
-        ),
-        "model_path": str(settings.model_path),
-    }
+    with urllib.request.urlopen(request, timeout=120) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+@mcp.tool()
+def predict_fraud(features: dict[str, Any]) -> dict[str, Any]:
+    """Call the Fraud FastAPI /predict endpoint and return fraud risk, alert, and SHAP explanation."""
+    return post_json(
+        url=f"{API_BASE_URL}/predict",
+        payload={"features": features},
+    )
 
 
 @mcp.tool()
@@ -71,41 +50,24 @@ def find_similar_fraud_cases(
     features: dict[str, Any],
     top_k: int = 50,
 ) -> dict[str, Any]:
-    """Search Milvus for historically similar confirmed fraud cases."""
+    """Call the Fraud FastAPI /similar-cases endpoint and return similar confirmed fraud cases."""
     top_k = min(max(top_k, 1), 50)
 
-    model = load_model()
-    df = pd.DataFrame([features])
-    embedding = model.transform_to_embeddings(df)[0]
-
-    store = MilvusVectorStore(vector_dim=model.embedding_dim)
-    results = store.search(embedding, top_k=top_k)
-
-    all_cases = [r.__dict__ for r in results]
-    fraud_cases = [
-        case
-        for case in all_cases
-        if int(case.get("label", 0)) == 1
-    ]
-
-    return {
-        "source": "milvus",
-        "top_k_searched": top_k,
-        "fraud_only": True,
-        "similar_cases": fraud_cases,
-    }
+    return post_json(
+        url=f"{API_BASE_URL}/similar-cases?top_k={top_k}",
+        payload={"features": features},
+    )
 
 
 @mcp.tool()
 def get_latest_training_summary() -> dict[str, Any]:
     """Return latest training summary from reports/best_model.json."""
-    settings = get_settings()
-    path: Path = settings.reports_path / "best_model.json"
+    path = PROJECT_ROOT / "reports" / "best_model.json"
 
     if not path.exists():
         return {
             "status": "missing",
-            "message": "best_model.json was not found. Run training first.",
+            "message": "reports/best_model.json was not found. Run training first.",
         }
 
     return json.loads(path.read_text(encoding="utf-8"))
