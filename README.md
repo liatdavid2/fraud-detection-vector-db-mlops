@@ -3,7 +3,15 @@
 Production-style fraud detection project that combines tabular machine learning, vector similarity search, and MLOps practices.
 
 The system trains a fraud detection model, stores historical application embeddings in Milvus Vector DB, and exposes FastAPI endpoints for real-time fraud scoring and similar-case retrieval.
+### MLflow Model Comparison Run
 
+The screenshot shows the MLflow experiment page for the training pipeline.
+
+Each full training execution creates a parent run, for example:
+
+```
+model-comparison-2026-06-19_12-35-46
+```
 <img width="1908" height="643" alt="image" src="https://github.com/user-attachments/assets/9ea01535-1dd1-4903-9c08-adea8ef05173" />
 
 ### MLflow Tracking
