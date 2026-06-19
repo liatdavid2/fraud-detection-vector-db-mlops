@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 import joblib
@@ -43,12 +45,50 @@ def temporal_or_stratified_split(
         if test_mask.sum() > 100 and train_mask.sum() > 100:
             return X[train_mask], X[test_mask], y[train_mask], y[test_mask]
 
-    return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
+    return train_test_split(
+        X,
+        y,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=y,
+    )
 
 
 def save_json(data: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def create_run_output_dir(base_reports_path: Path) -> Path:
+    """Create a timestamped output directory for one full model-comparison run."""
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = base_reports_path / "runs" / timestamp
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def copy_latest_artifacts(run_reports_path: Path, latest_reports_path: Path) -> None:
+    """Copy current run artifacts to reports/ as latest files for dashboard/readme convenience."""
+    latest_reports_path.mkdir(parents=True, exist_ok=True)
+
+    artifact_names = [
+        "metrics.json",
+        "best_model.json",
+        "model_comparison.csv",
+        "classification_report.json",
+        "confusion_matrix.png",
+        "pr_curve.png",
+        "roc_curve.png",
+        "validation_report.json",
+        "training_sample_predictions.csv",
+        "run_metadata.json",
+    ]
+
+    for file_name in artifact_names:
+        source = run_reports_path / file_name
+        destination = latest_reports_path / file_name
+        if source.exists():
+            shutil.copy2(source, destination)
 
 
 def fraud_top_percent_metrics(
@@ -86,6 +126,7 @@ def find_best_threshold(y_true: pd.Series, y_proba: np.ndarray) -> dict[str, flo
 
     for threshold in np.arange(0.01, 1.00, 0.01):
         y_pred = (y_proba >= threshold).astype(int)
+
         precision = precision_score(y_true, y_pred, zero_division=0)
         recall = recall_score(y_true, y_pred, zero_division=0)
         f1 = f1_score(y_true, y_pred, zero_division=0)
@@ -114,16 +155,26 @@ def evaluate_fraud_model(
         "precision_at_default_threshold": float(
             precision_score(y_true, y_pred, zero_division=0)
         ),
-        "recall_at_default_threshold": float(recall_score(y_true, y_pred, zero_division=0)),
-        "f1_at_default_threshold": float(f1_score(y_true, y_pred, zero_division=0)),
+        "recall_at_default_threshold": float(
+            recall_score(y_true, y_pred, zero_division=0)
+        ),
+        "f1_at_default_threshold": float(
+            f1_score(y_true, y_pred, zero_division=0)
+        ),
         "default_threshold": float(default_threshold),
     }
+
     metrics.update(find_best_threshold(y_true, y_proba))
     metrics.update(fraud_top_percent_metrics(y_true, y_proba, top_percent=0.05))
     return metrics
 
 
-def plot_reports(y_true: pd.Series, y_proba: np.ndarray, y_pred: np.ndarray, reports_path: Path) -> None:
+def plot_reports(
+    y_true: pd.Series,
+    y_proba: np.ndarray,
+    y_pred: np.ndarray,
+    reports_path: Path,
+) -> None:
     reports_path.mkdir(parents=True, exist_ok=True)
 
     cm = confusion_matrix(y_true, y_pred)
@@ -149,13 +200,42 @@ def plot_reports(y_true: pd.Series, y_proba: np.ndarray, y_pred: np.ndarray, rep
 
 def train(skip_milvus: bool = False) -> dict[str, float]:
     settings = get_settings()
+    run_reports_path = create_run_output_dir(settings.reports_path)
+
+    print("=" * 80)
+    print(f"Run reports will be saved to: {run_reports_path}")
+    print("=" * 80)
+
     df, target = load_dataset(max_rows=settings.max_train_rows)
 
     checks = validate_dataframe(df, target)
-    save_validation_report(checks, settings.reports_path / "validation_report.json")
+    save_validation_report(checks, run_reports_path / "validation_report.json")
 
     X_train, X_test, y_train, y_test = temporal_or_stratified_split(
-        df, target, settings.test_size, settings.random_state
+        df,
+        target,
+        settings.test_size,
+        settings.random_state,
+    )
+
+    save_json(
+        {
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "target": target,
+            "rows": int(len(df)),
+            "train_rows": int(len(X_train)),
+            "test_rows": int(len(X_test)),
+            "fraud_rate": float(df[target].mean()),
+            "test_fraud_rate": float(y_test.mean()),
+            "max_train_rows": settings.max_train_rows,
+            "test_size": settings.test_size,
+            "embedding_dim": settings.embedding_dim,
+            "n_neighbors": settings.n_neighbors,
+            "review_threshold": settings.review_threshold,
+            "skip_milvus": bool(skip_milvus),
+            "run_reports_path": str(run_reports_path),
+        },
+        run_reports_path / "run_metadata.json",
     )
 
     train_ids = (
@@ -188,6 +268,7 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
         print(f"Starting experiment: {experiment_name}")
         print(f"classifier={classifier_name}, use_vector_features={use_vector_features}")
         print("=" * 80)
+
         with mlflow.start_run(run_name=experiment_name):
             mlflow.log_params(
                 {
@@ -200,6 +281,7 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
                     "n_neighbors": settings.n_neighbors,
                     "classifier_name": classifier_name,
                     "use_vector_features": use_vector_features,
+                    "run_reports_path": str(run_reports_path),
                 }
             )
 
@@ -213,6 +295,7 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
             )
 
             model.fit(X_train, y_train, application_ids=train_ids)
+
             y_proba = model.predict_proba(X_test)[:, 1]
             metrics = evaluate_fraud_model(
                 y_true=y_test,
@@ -230,14 +313,18 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
             all_results.append(row)
 
             mlflow.log_metrics(metrics)
+
             print(f"Finished experiment: {experiment_name}")
             print(json.dumps(metrics, indent=2))
 
             is_better = best_metrics is None or (
-                metrics["average_precision"], metrics["recall_at_top_5pct"]
+                metrics["average_precision"],
+                metrics["recall_at_top_5pct"],
             ) > (
-                best_metrics["average_precision"], best_metrics["recall_at_top_5pct"]
+                best_metrics["average_precision"],
+                best_metrics["recall_at_top_5pct"],
             )
+
             if is_better:
                 best_model = model
                 best_metrics = metrics
@@ -247,6 +334,7 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
 
     if best_model is None or best_metrics is None or best_name is None:
         raise RuntimeError("No model was trained successfully.")
+
     if best_y_proba is None or best_y_pred is None:
         raise RuntimeError("Best model predictions are missing.")
 
@@ -254,27 +342,43 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
         by=["average_precision", "recall_at_top_5pct"],
         ascending=False,
     )
-    comparison_path = settings.reports_path / "model_comparison.csv"
+
+    comparison_path = run_reports_path / "model_comparison.csv"
     comparison_df.to_csv(comparison_path, index=False)
 
-    save_json(best_metrics, settings.reports_path / "metrics.json")
+    save_json(best_metrics, run_reports_path / "metrics.json")
     save_json(
         {
             "best_model": best_name,
             "selection_metric": "average_precision_then_recall_at_top_5pct",
             "metrics": best_metrics,
+            "run_reports_path": str(run_reports_path),
         },
-        settings.reports_path / "best_model.json",
+        run_reports_path / "best_model.json",
     )
 
-    report = classification_report(y_test, best_y_pred, output_dict=True, zero_division=0)
-    save_json(report, settings.reports_path / "classification_report.json")
-    plot_reports(y_test, best_y_proba, best_y_pred, settings.reports_path)
+    report = classification_report(
+        y_test,
+        best_y_pred,
+        output_dict=True,
+        zero_division=0,
+    )
+    save_json(report, run_reports_path / "classification_report.json")
+
+    plot_reports(
+        y_true=y_test,
+        y_proba=best_y_proba,
+        y_pred=best_y_pred,
+        reports_path=run_reports_path,
+    )
 
     sample_predictions = X_test.head(200).copy()
     sample_predictions["actual_fraud"] = y_test.head(200).values
     sample_predictions["fraud_probability"] = best_y_proba[: len(sample_predictions)]
-    sample_predictions.to_csv(settings.reports_path / "training_sample_predictions.csv", index=False)
+    sample_predictions.to_csv(
+        run_reports_path / "training_sample_predictions.csv",
+        index=False,
+    )
 
     joblib.dump(best_model, settings.model_path)
 
@@ -284,16 +388,23 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
     else:
         indexed = False
 
+    copy_latest_artifacts(
+        run_reports_path=run_reports_path,
+        latest_reports_path=settings.reports_path,
+    )
+
     with mlflow.start_run(run_name="best-model-artifacts"):
         mlflow.log_params(
             {
                 "best_model": best_name,
                 "milvus_indexed": indexed,
                 "selection_metric": "average_precision_then_recall_at_top_5pct",
+                "run_reports_path": str(run_reports_path),
             }
         )
         mlflow.log_metrics(best_metrics)
         mlflow.log_artifact(str(settings.model_path), artifact_path="model")
+
         for artifact in [
             "metrics.json",
             "best_model.json",
@@ -304,22 +415,32 @@ def train(skip_milvus: bool = False) -> dict[str, float]:
             "roc_curve.png",
             "validation_report.json",
             "training_sample_predictions.csv",
+            "run_metadata.json",
         ]:
-            path = settings.reports_path / artifact
+            path = run_reports_path / artifact
             if path.exists():
                 mlflow.log_artifact(str(path), artifact_path="reports")
 
+    print("=" * 80)
     print("Training completed.")
     print(f"Best model: {best_name}")
     print(json.dumps(best_metrics, indent=2))
     print(f"Model saved to: {settings.model_path}")
+    print(f"Run reports saved to: {run_reports_path}")
+    print(f"Latest reports copied to: {settings.reports_path}")
     print(f"Model comparison saved to: {comparison_path}")
+    print("=" * 80)
+
     return best_metrics
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--skip-milvus", action="store_true", help="Train without writing embeddings to Milvus")
+    parser.add_argument(
+        "--skip-milvus",
+        action="store_true",
+        help="Train without writing embeddings to Milvus",
+    )
     args = parser.parse_args()
     train(skip_milvus=args.skip_milvus)
 
