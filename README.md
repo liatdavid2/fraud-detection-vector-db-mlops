@@ -230,9 +230,6 @@ The project includes:
 * Dockerized Milvus infrastructure
 * Reproducible setup scripts
 * FastAPI serving layer
-* Local dashboard
-* Smoke-test data generation
-* API testing through Swagger and curl
 
 ---
 
