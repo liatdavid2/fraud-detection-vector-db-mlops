@@ -1,4 +1,4 @@
-# Fraud Detection Vector DB MLOps
+# Fraud Detection Vector DB + MLOps + Claude MCP
 
 Production-style fraud detection project that combines tabular machine learning, vector similarity search, and MLOps practices.
 
