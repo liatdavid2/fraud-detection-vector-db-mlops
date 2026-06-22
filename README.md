@@ -2,6 +2,8 @@
 
 Production-style fraud detection project that combines tabular machine learning, vector similarity search, and MLOps practices.
 
+The project uses the Bank Account Fraud (BAF) Dataset Suite, a realistic financial fraud dataset with highly imbalanced tabular data, making it suitable for fraud detection, risk scoring, model evaluation, and production-style MLOps workflows.
+
 The system trains a fraud detection model, stores historical application embeddings in Milvus Vector DB, and exposes FastAPI endpoints for real-time fraud scoring and similar-case retrieval.
 ### MLflow Model Comparison Run
 
